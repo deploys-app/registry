@@ -25,13 +25,13 @@ export async function authorized (request, env, ctx) {
 	if (url.pathname === '/v2/') {
 		const email = await getEmail(auth, env, ctx)
 		if (!email) {
+			console.log(auth)
 			return unauthorizedResponse
 		}
 		return // authorized
 	}
 
 	const project = url.pathname.match(/^\/v2\/([^/]*)\/.*$/)?.[1]
-	console.log(project)
 	if (!project) {
 		return unauthorizedResponse
 	}
@@ -76,7 +76,6 @@ export async function authorized (request, env, ctx) {
 	if (!res.ok) {
 		return unauthorizedResponse
 	}
-	console.log(res.result)
 	if (!res.result.authorized) {
 		return unauthorizedResponse
 	}
