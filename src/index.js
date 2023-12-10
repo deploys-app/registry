@@ -14,7 +14,7 @@ router.get('/',
 	 * @returns {Promise<import('@cloudflare/workers-types').Response>}
 	 */
 	async (request, env, ctx) => {
-		return new Response('Moon Rhythm Registry')
+		return new Response('Deploys.app Registry Service')
 	}
 )
 
@@ -35,8 +35,6 @@ router.all('*',
 /**
  * @typedef Env
  * @property {import('@cloudflare/workers-types').R2Bucket} BUCKET
- * @property {string} AUTH_USER
- * @property {string} AUTH_PASSWORD
  */
 
 export default {

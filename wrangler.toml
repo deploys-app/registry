@@ -1,13 +1,13 @@
-name = "registry"
+name = "deploys--registry"
 main = "src/index.js"
 compatibility_date = "2023-05-18"
 
 [route]
-pattern = "registry.moonrhythm.io"
+pattern = "registry.deploys.app"
 custom_domain = true
 
 [vars]
 
 [[r2_buckets]]
 binding = "BUCKET"
-bucket_name = "registry"
+bucket_name = "deploys-registry"
