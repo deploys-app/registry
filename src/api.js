@@ -12,7 +12,7 @@ router.all('*', (request) => {
 	}
 })
 
-router.post('/getRepositories',
+router.post('/list',
 	/**
 	 * @param {import('itty-router').IRequest} request
 	 * @param {Env} env
@@ -36,7 +36,7 @@ router.post('/getRepositories',
 	}
 )
 
-router.post('/getRepository',
+router.post('/get',
 	/**
 	 * @param {import('itty-router').IRequest} request
 	 * @param {Env} env
@@ -44,50 +44,121 @@ router.post('/getRepository',
 	 * @returns {Promise<import('@cloudflare/workers-types').Response>}
 	 */
 	async (request, env, ctx) => {
-		/**
-		 * @property {string} repository
-		 */
-		const req = await request.json()
-		if (!req) {
-			return error('invalid request')
-		}
-		if (typeof req.repository !== 'string') {
+		const { repository } = await request.json() ?? {}
+		if (typeof repository !== 'string') {
 			return error('repository required')
 		}
 
 		const db = env.DB
-		const repo = await db.prepare(`
-			select name, created_at
-			from repositories
-			where name = ?
-		`).bind(req.repository).first()
+		const xs = await db.batch([
+			db.prepare(`
+				select name, created_at
+				from repositories
+				where name = ?
+			`).bind(repository),
+			db.prepare(`
+				select sum(size) as size
+				from blobs
+				where repository = ?
+			`).bind(repository)
+		])
+
+		const repo = xs[0].results[0]
 		if (!repo) {
 			return error('repository not found')
 		}
+		const size = xs[1].results[0].size
+
+		return ok({
+			name: repo.name,
+			size,
+			createdAt: format(dayjs(repo.created_at))
+		})
+	}
+)
+
+router.post('/getTags',
+	/**
+	 * @param {import('itty-router').IRequest} request
+	 * @param {Env} env
+	 * @param {import('@cloudflare/workers-types').ExecutionContext} ctx
+	 * @returns {Promise<import('@cloudflare/workers-types').Response>}
+	 */
+	async (request, env, ctx) => {
+		const { repository } = await request.json() ?? {}
+		if (typeof repository !== 'string') {
+			return error('repository required')
+		}
+
+		const db = env.DB
 		const xs = await db.batch([
 			db.prepare(`
-				select digest, created_at
-				from manifests
-				where repository = ?
-				order by created_at desc
-			`).bind(req.repository),
+				select name, created_at
+				from repositories
+				where name = ?
+			`).bind(repository),
 			db.prepare(`
 				select tag, digest, created_at
 				from tags
 				where repository = ?
 				order by created_at desc
-			`).bind(req.repository)
+			`).bind(repository)
 		])
+
+		const repo = xs[0].results[0]
+		if (!repo) {
+			return error('repository not found')
+		}
+		const tags = xs[1].results
 
 		return ok({
 			name: repo.name,
-			createdAt: format(dayjs(repo.created_at)),
-			digests: xs[0].results.map((x) => ({
+			items: tags.map((x) => ({
+				tag: x.tag,
 				digest: x.digest,
 				createdAt: format(dayjs(x.created_at))
-			})),
-			tags: xs[1].results.map((x) => ({
-				tag: x.tag,
+			}))
+		})
+	}
+)
+
+router.post('/getManifests',
+	/**
+	 * @param {import('itty-router').IRequest} request
+	 * @param {Env} env
+	 * @param {import('@cloudflare/workers-types').ExecutionContext} ctx
+	 * @returns {Promise<import('@cloudflare/workers-types').Response>}
+	 */
+	async (request, env, ctx) => {
+		const { repository } = await request.json() ?? {}
+		if (typeof repository !== 'string') {
+			return error('repository required')
+		}
+
+		const db = env.DB
+		const xs = await db.batch([
+			db.prepare(`
+				select name, created_at
+				from repositories
+				where name = ?
+			`).bind(repository),
+			db.prepare(`
+				select digest, created_at
+				from manifests
+				where repository = ?
+				order by created_at desc
+			`).bind(repository)
+		])
+
+		const repo = xs[0].results[0]
+		if (!repo) {
+			return error('repository not found')
+		}
+		const digests = xs[1].results
+
+		return ok({
+			name: repo.name,
+			items: digests.map((x) => ({
 				digest: x.digest,
 				createdAt: format(dayjs(x.created_at))
 			}))

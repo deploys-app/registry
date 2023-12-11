@@ -61,10 +61,10 @@ export async function authorized (request, env, ctx) {
  * @returns {boolean}
  */
 function isPushRequest (request) {
-	return !({
+	return !{
 		GET: true,
 		HEAD: true
-	}[request.method])
+	}[request.method]
 }
 
 /**
