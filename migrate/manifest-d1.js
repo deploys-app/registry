@@ -1,4 +1,5 @@
-const endpoint = 'https://registry.moonrhythm.io'
+const endpoint = 'https://registry.deploys.app'
+const auth = ''
 
 async function getRepositories () {
 	const resp = await fetch(`${endpoint}/api/getRepositories`, {
@@ -14,7 +15,11 @@ async function getRepositories () {
 }
 
 async function sync (repo) {
-	const resp = await fetch(`${endpoint}/v2/${repo}/tags/list`)
+	const resp = await fetch(`${endpoint}/v2/${repo}/tags/list`, {
+		headers: {
+			authorization: auth
+		}
+	})
 	if (!resp.ok) throw new Error(resp.statusText)
 	const { name, tags } = await resp.json()
 	return Promise.all(
@@ -33,7 +38,11 @@ async function sync (repo) {
 }
 
 async function getDigest (repo, tag) {
-	const resp = await fetch(`${endpoint}/v2/${repo}/manifests/${tag}`)
+	const resp = await fetch(`${endpoint}/v2/${repo}/manifests/${tag}`, {
+		headers: {
+			authorization: auth
+		}
+	})
 	if (!resp.ok) throw new Error(resp.statusText)
 	let { digest } = (await resp.json()).config ?? ''
 	if (!digest) {
