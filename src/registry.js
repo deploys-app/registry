@@ -235,7 +235,7 @@ router.post('/:name+/blobs/uploads/',
 		// step: end-4a => [end-5]* => end-6
 
 		const reference = crypto.randomUUID()
-		const upload = await env.BUCKET.createMultipartUpload(`uploads/${reference}`)
+		const upload = await env.BUCKET.createMultipartUpload(`_uploads/${reference}`)
 		/** @type {UploadState} */
 		const uploadState = {
 			size: 0,
@@ -296,7 +296,7 @@ router.patch('/:name+/blobs/uploads/:reference',
 			})
 		}
 
-		const upload = env.BUCKET.resumeMultipartUpload(`uploads/${reference}`, uploadId)
+		const upload = env.BUCKET.resumeMultipartUpload(`_uploads/${reference}`, uploadId)
 		const part = await upload.uploadPart(uploadState.parts.length + 1, request.body)
 		uploadState.parts.push(part)
 		uploadState.size += length
@@ -334,7 +334,7 @@ router.put('/:name+/blobs/uploads/:reference',
 			return registryErrorResponse(400, UnsupportedError)
 		}
 
-		const upload = env.BUCKET.resumeMultipartUpload(`uploads/${reference}`, uploadId)
+		const upload = env.BUCKET.resumeMultipartUpload(`_uploads/${reference}`, uploadId)
 
 		const length = parseInt(request.headers.get('content-length') ?? '0')
 		if (length > 0) {
@@ -345,11 +345,11 @@ router.put('/:name+/blobs/uploads/:reference',
 
 		// copy completed object to blob
 		{
-			const upload = await env.BUCKET.get(`uploads/${reference}`)
+			const upload = await env.BUCKET.get(`_uploads/${reference}`)
 			await env.BUCKET.put(`${name}/blobs/${digest}`, upload.body, {
 				sha256: digestToSHA256(digest)
 			})
-			await env.BUCKET.delete(`uploads/${reference}`)
+			await env.BUCKET.delete(`_uploads/${reference}`)
 		}
 
 		return new Response(null, {
@@ -420,6 +420,32 @@ router.put('/:name+/manifests/:reference',
 				: null
 		])
 
+		const db = env.DB
+		const batch = [
+			db.prepare(`
+				insert into repositories (name)
+				values (?)
+				on conflict do nothing
+			`).bind(name),
+			db.prepare(`
+				insert into manifests (repository, digest)
+				values (?, ?)
+				on conflict do nothing
+			`).bind(name, digest)
+		]
+		if (digest !== reference) {
+			batch.push(
+				db.prepare(`
+					insert into tags (repository, tag, digest)
+					values (?, ?, ?)
+					on conflict (repository, tag)
+					do update
+					    set digest = excluded.digest,
+					        created_at = current_timestamp
+				`).bind(name, reference, digest)
+			)
+		}
+		ctx.waitUntil(db.batch(batch))
 
 		return new Response(null, {
 			status: 201,
@@ -493,6 +519,19 @@ router.delete('/:name+/manifests/:reference',
 		// TODO: cronjob delete no ref blobs
 
 		await env.BUCKET.delete(`${name}/manifests/${reference}`)
+
+		if (isSHA256(reference)) {
+			ctx.waitUntil(env.DB.prepare(`
+				delete from manifests
+				where repository = ? and digest = ?
+			`).bind(name, reference).run())
+		} else {
+			ctx.waitUntil(env.DB.prepare(`
+				delete from tags
+				where repository = ? and tag = ?
+			`).bind(name, reference).run())
+		}
+
 		return new Response(null, {
 			status: 202
 		})
@@ -641,6 +680,14 @@ const sha256PrefixLength = 'sha256:'.length
  */
 function digestToSHA256 (digest) {
 	return digest.slice(sha256PrefixLength)
+}
+
+/**
+ * @param {string} digest
+ * @returns {boolean}
+ */
+function isSHA256 (digest) {
+	return digest.startsWith('sha256:')
 }
 
 /**

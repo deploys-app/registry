@@ -1,10 +1,12 @@
 import { Router } from 'itty-router'
 import { router as registry } from './registry'
+import { router as api } from './api'
 import { authorized } from './auth'
 
 const router = Router()
 
 router.all('/v2/*', authorized, registry.handle)
+router.all('/api/*', api.handle)
 
 router.get('/',
 	/**
@@ -35,6 +37,7 @@ router.all('*',
 /**
  * @typedef Env
  * @property {import('@cloudflare/workers-types').R2Bucket} BUCKET
+ * @property {import('@cloudflare/workers-types').D1Database} DB
  */
 
 export default {
