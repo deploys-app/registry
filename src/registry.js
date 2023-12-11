@@ -186,9 +186,11 @@ router.post('/:name+/blobs/uploads/',
 					redirect: 'follow'
 				})
 				if (resp.ok) { // not ok fallback to end-4a
+					const size = parseInt(resp.headers.get('content-length') ?? '0')
 					await env.BUCKET.put(`${name}/blobs/${mount}`, resp.body, {
 						sha256: digestToSHA256(mount)
 					})
+					ctx.waitUntil(insertBlob(env.DB, name, mount, size))
 					return new Response(null, {
 						status: 201,
 						headers: {
@@ -203,6 +205,7 @@ router.post('/:name+/blobs/uploads/',
 					await env.BUCKET.put(`${name}/blobs/${mount}`, res.body, {
 						sha256: digestToSHA256(mount)
 					})
+					ctx.waitUntil(insertBlob(env.DB, name, mount, res.size))
 					return new Response(null, {
 						status: 201,
 						headers: {
@@ -221,6 +224,7 @@ router.post('/:name+/blobs/uploads/',
 				await env.BUCKET.put(`${name}/blobs/${digest}`, request.body, {
 					sha256: digestToSHA256(digest)
 				})
+				ctx.waitUntil(insertBlob(env.DB, name, digest, res.size))
 			}
 			return new Response(null, {
 				status: 201,
@@ -350,6 +354,7 @@ router.put('/:name+/blobs/uploads/:reference',
 				sha256: digestToSHA256(digest)
 			})
 			await env.BUCKET.delete(`_uploads/${reference}`)
+			ctx.waitUntil(insertBlob(env.DB, name, digest, upload.size))
 		}
 
 		return new Response(null, {
@@ -555,6 +560,11 @@ router.delete('/:name+/blobs/:digest',
 		}
 
 		await env.BUCKET.delete(`${name}/blobs/${digest}`)
+		ctx.waitUntil(env.DB.prepare(`
+			delete from blobs
+			where repository = ? and digest = ?
+		`).bind(name, digest).run())
+
 		return new Response(null, {
 			status: 202
 		})
@@ -700,4 +710,19 @@ function isSHA256 (digest) {
 function uploadLocation (name, reference, uploadId, uploadState) {
 	const state = encodeURIComponent(JSON.stringify(uploadState))
 	return `/v2/${name}/blobs/uploads/${reference}?upload=${uploadId}&state=${state}`
+}
+
+/**
+ * @param {import('@cloudflare/workers-types').D1Database} db
+ * @param {string} name
+ * @param {string} digest
+ * @param {number} size
+ * @returns {Promise<import('@cloudflare/workers-types').D1Result>}
+ */
+function insertBlob (db, name, digest, size) {
+	return db.prepare(`
+		insert into blobs (repository, digest, size)
+		values (?, ?, ?)
+		on conflict do nothing
+	`).bind(name, digest, size).run()
 }
