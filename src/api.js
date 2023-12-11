@@ -45,7 +45,7 @@ router.post('/get',
 	 */
 	async (request, env, ctx) => {
 		const { repository } = await request.json() ?? {}
-		if (typeof repository !== 'string') {
+		if (typeof repository !== 'string' || !repository) {
 			return error('repository required')
 		}
 
@@ -86,7 +86,7 @@ router.post('/getTags',
 	 */
 	async (request, env, ctx) => {
 		const { repository } = await request.json() ?? {}
-		if (typeof repository !== 'string') {
+		if (typeof repository !== 'string' || !repository) {
 			return error('repository required')
 		}
 
@@ -131,7 +131,7 @@ router.post('/getManifests',
 	 */
 	async (request, env, ctx) => {
 		const { repository } = await request.json() ?? {}
-		if (typeof repository !== 'string') {
+		if (typeof repository !== 'string' || !repository) {
 			return error('repository required')
 		}
 
