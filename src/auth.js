@@ -3,8 +3,10 @@ import { UnauthorizedError, registryErrorResponse } from './registry'
 const authEndpoint = 'https://api.deploys.app/me.authorized'
 const infoEndpoint = 'https://api.deploys.app/me.get'
 
-const pullPermission = 'registry.pull'
-const pushPermission = 'registry.push'
+export const pullPermission = 'registry.pull'
+export const pushPermission = 'registry.push'
+export const listPermission = 'registry.list'
+export const getPermission = 'registry.get'
 
 /**
  * @param {import('itty-router').IRequest} request
@@ -25,7 +27,6 @@ export async function authorized (request, env, ctx) {
 	if (url.pathname === '/v2/') {
 		const email = await getEmail(auth, env, ctx)
 		if (!email) {
-			console.log(auth)
 			return unauthorizedResponse
 		}
 		return // authorized
@@ -118,7 +119,11 @@ async function getEmail (auth, env, ctx) {
  * @param {import('@cloudflare/workers-types').ExecutionContext} ctx
  * @returns {Promise<boolean>}
  */
-async function checkPermission (auth, project, permission, env, ctx) {
+export async function checkPermission (auth, project, permission, env, ctx) {
+	if (!auth) {
+		return false
+	}
+
 	const cache = caches.default
 	const cacheKey = `deploys--registry|auth|${project}|${permission}|${auth}`
 	const cacheReq = new Request(authEndpoint, {

@@ -1,5 +1,10 @@
 import { Router } from 'itty-router'
 import dayjs from 'dayjs'
+import {
+	checkPermission,
+	listPermission,
+	getPermission
+} from './auth'
 
 export const router = Router({ base: '/api/' })
 
@@ -20,16 +25,27 @@ router.post('/list',
 	 * @returns {Promise<import('@cloudflare/workers-types').Response>}
 	 */
 	async (request, env, ctx) => {
+		const { project } = await request.json() ?? {}
+		if (typeof project !== 'string' || !project) {
+			return error('project required')
+		}
+
+		const auth = request.headers.get('authorization') ?? ''
+		if (!await checkPermission(auth, project, listPermission, env, ctx)) {
+			return error('api: unauthorized')
+		}
+
 		const db = env.DB
 		const res = await db
 			.prepare(`
 				select name, created_at
 				from repositories
+				where namespace = ?
 				order by name
-			`).all()
+			`).bind(project).all()
 		return ok({
 			items: res.results.map((x) => ({
-				name: x.name,
+				name: x.name.slice(project.length + 1),
 				createdAt: format(dayjs(x.created_at))
 			}))
 		})
@@ -44,9 +60,17 @@ router.post('/get',
 	 * @returns {Promise<import('@cloudflare/workers-types').Response>}
 	 */
 	async (request, env, ctx) => {
-		const { repository } = await request.json() ?? {}
+		const { project, repository } = await request.json() ?? {}
+		if (typeof project !== 'string' || !project) {
+			return error('project required')
+		}
 		if (typeof repository !== 'string' || !repository) {
 			return error('repository required')
+		}
+
+		const auth = request.headers.get('authorization') ?? ''
+		if (!await checkPermission(auth, project, getPermission, env, ctx)) {
+			return error('api: unauthorized')
 		}
 
 		const db = env.DB
@@ -54,13 +78,13 @@ router.post('/get',
 			db.prepare(`
 				select name, created_at
 				from repositories
-				where name = ?
-			`).bind(repository),
+				where name = ? and namespace = ?
+			`).bind(`${project}/${repository}`, project),
 			db.prepare(`
 				select sum(size) as size
 				from blobs
 				where repository = ?
-			`).bind(repository)
+			`).bind(`${project}/${repository}`)
 		])
 
 		const repo = xs[0].results[0]
@@ -70,7 +94,7 @@ router.post('/get',
 		const size = xs[1].results[0].size
 
 		return ok({
-			name: repo.name,
+			name: repo.name.slice(project.length + 1),
 			size,
 			createdAt: format(dayjs(repo.created_at))
 		})
@@ -85,9 +109,17 @@ router.post('/getTags',
 	 * @returns {Promise<import('@cloudflare/workers-types').Response>}
 	 */
 	async (request, env, ctx) => {
-		const { repository } = await request.json() ?? {}
+		const { project, repository } = await request.json() ?? {}
+		if (typeof project !== 'string' || !project) {
+			return error('project required')
+		}
 		if (typeof repository !== 'string' || !repository) {
 			return error('repository required')
+		}
+
+		const auth = request.headers.get('authorization') ?? ''
+		if (!await checkPermission(auth, project, getPermission, env, ctx)) {
+			return error('api: unauthorized')
 		}
 
 		const db = env.DB
@@ -95,14 +127,14 @@ router.post('/getTags',
 			db.prepare(`
 				select name, created_at
 				from repositories
-				where name = ?
-			`).bind(repository),
+				where name = ? and namespace = ?
+			`).bind(`${project}/${repository}`, project),
 			db.prepare(`
 				select tag, digest, created_at
 				from tags
 				where repository = ?
 				order by created_at desc
-			`).bind(repository)
+			`).bind(`${project}/${repository}`)
 		])
 
 		const repo = xs[0].results[0]
@@ -112,7 +144,7 @@ router.post('/getTags',
 		const tags = xs[1].results
 
 		return ok({
-			name: repo.name,
+			name: repo.name.slice(project.length + 1),
 			items: tags.map((x) => ({
 				tag: x.tag,
 				digest: x.digest,
@@ -130,9 +162,17 @@ router.post('/getManifests',
 	 * @returns {Promise<import('@cloudflare/workers-types').Response>}
 	 */
 	async (request, env, ctx) => {
-		const { repository } = await request.json() ?? {}
+		const { project, repository } = await request.json() ?? {}
+		if (typeof project !== 'string' || !project) {
+			return error('project required')
+		}
 		if (typeof repository !== 'string' || !repository) {
 			return error('repository required')
+		}
+
+		const auth = request.headers.get('authorization') ?? ''
+		if (!await checkPermission(auth, project, getPermission, env, ctx)) {
+			return error('api: unauthorized')
 		}
 
 		const db = env.DB
@@ -140,14 +180,14 @@ router.post('/getManifests',
 			db.prepare(`
 				select name, created_at
 				from repositories
-				where name = ?
-			`).bind(repository),
+				where name = ? and namespace = ?
+			`).bind(`${project}/${repository}`, project),
 			db.prepare(`
 				select digest, created_at
 				from manifests
 				where repository = ?
 				order by created_at desc
-			`).bind(repository)
+			`).bind(`${project}/${repository}`)
 		])
 
 		const repo = xs[0].results[0]
@@ -157,7 +197,7 @@ router.post('/getManifests',
 		const digests = xs[1].results
 
 		return ok({
-			name: repo.name,
+			name: repo.name.slice(project.length + 1),
 			items: digests.map((x) => ({
 				digest: x.digest,
 				createdAt: format(dayjs(x.created_at))
