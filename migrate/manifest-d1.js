@@ -2,7 +2,11 @@ const endpoint = 'https://registry.moonrhythm.io'
 
 async function getRepositories () {
 	const resp = await fetch(`${endpoint}/api/getRepositories`, {
-		method: 'POST'
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json'
+		},
+		body: JSON.stringify({})
 	})
 	if (!resp.ok) throw new Error(resp.statusText)
 	const { result } = await resp.json()
