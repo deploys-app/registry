@@ -90,8 +90,8 @@ export async function authorized (request, env, ctx) {
  */
 function isPushRequest (request) {
 	return !({
-		'GET': true,
-		'HEAD': true
+		GET: true,
+		HEAD: true
 	}[request.method])
 }
 

@@ -1,6 +1,6 @@
 import { Router } from 'itty-router'
 
-const ChunkMinLength = 5<<10*2 // 5 MiB
+const ChunkMinLength = 5 << 10 * 2 // 5 MiB
 
 export const router = Router({ base: '/v2/' })
 
@@ -263,26 +263,26 @@ router.patch('/:name+/blobs/uploads/:reference',
 	 */
 	async (request, env, ctx) => {
 		const { name, reference } = request.params
-		const { upload: uploadId, state, digest } = request.query
+		const { upload: uploadId, state } = request.query
 		if (typeof uploadId !== 'string' || typeof state !== 'string') {
-			return new registryErrorResponse(400, UnsupportedError)
+			return registryErrorResponse(400, UnsupportedError)
 		}
 		const length = parseInt(request.headers.get('content-length') ?? '0')
 		if (!length) {
-			return new registryErrorResponse(400, UnsupportedError) // body exceed cloudflare allow
+			return registryErrorResponse(400, UnsupportedError) // body exceed cloudflare allow
 		}
 		const contentRange = request.headers.get('content-range')
-		const [ rangeStart, rangeEnd ] = contentRange
+		const [rangeStart, rangeEnd] = contentRange
 			? contentRange.split('-')
 			: ['0', '' + length]
 		if (!rangeStart || !rangeEnd) {
-			return new registryErrorResponse(400, UnsupportedError)
+			return registryErrorResponse(400, UnsupportedError)
 		}
 
 		/** @type {UploadState} */
 		const uploadState = JSON.parse(state)
 		if (!uploadState) {
-			return new registryErrorResponse(400, UnsupportedError)
+			return registryErrorResponse(400, UnsupportedError)
 		}
 
 		if (uploadState.size !== +rangeStart) {
@@ -304,7 +304,7 @@ router.patch('/:name+/blobs/uploads/:reference',
 		return new Response(null, {
 			status: 202,
 			headers: {
-				location: uploadLocation(name, reference, uploadId, uploadState),
+				location: uploadLocation(name, reference, uploadId, uploadState)
 			}
 		})
 	}
@@ -322,16 +322,16 @@ router.put('/:name+/blobs/uploads/:reference',
 	async (request, env, ctx) => {
 		const { name, reference } = request.params
 		const { upload: uploadId, state, digest } = request.query
-		if (typeof uploadId !== 'string'
-			|| typeof state !== 'string'
-			|| typeof digest !== 'string') {
-			return new registryErrorResponse(400, UnsupportedError)
+		if (typeof uploadId !== 'string' ||
+			typeof state !== 'string' ||
+			typeof digest !== 'string') {
+			return registryErrorResponse(400, UnsupportedError)
 		}
 
 		/** @type {UploadState} */
 		const uploadState = JSON.parse(state)
 		if (!uploadState) {
-			return new registryErrorResponse(400, UnsupportedError)
+			return registryErrorResponse(400, UnsupportedError)
 		}
 
 		const upload = env.BUCKET.resumeMultipartUpload(`uploads/${reference}`, uploadId)
@@ -467,7 +467,7 @@ router.get('/:name+/tags/list',
 		return new Response(JSON.stringify({ name, tags }), {
 			headers: {
 				'content-type': 'application/json',
-				...link ? { 'link': `<${link}>; rel=next` } : null
+				...link ? { link: `<${link}>; rel=next` } : null
 			}
 		})
 	}
@@ -533,15 +533,15 @@ router.get('/:name+/blobs/uploads/:reference',
 	 */
 	async (request, env, ctx) => {
 		const { name, reference } = request.params
-		const { upload: uploadId, state, digest } = request.query
+		const { upload: uploadId, state } = request.query
 		if (typeof uploadId !== 'string' || typeof state !== 'string') {
-			return new registryErrorResponse(400, UnsupportedError)
+			return registryErrorResponse(400, UnsupportedError)
 		}
 
 		/** @type {UploadState} */
 		const uploadState = JSON.parse(state)
 		if (!uploadState) {
-			return new registryErrorResponse(400, UnsupportedError)
+			return registryErrorResponse(400, UnsupportedError)
 		}
 
 		return new Response(null, {
@@ -558,7 +558,7 @@ function hexToDigest (s) {
 	const digest = [...new Uint8Array(s)]
 		.map((b) => b.toString(16).padStart(2, '0'))
 		.join('')
-	return `sha256:${digest}`;
+	return `sha256:${digest}`
 }
 
 // errors
@@ -623,7 +623,7 @@ export const UnsupportedError = {
  */
 export function registryErrorResponse (status, ...errors) {
 	return new Response(JSON.stringify({
-		errors: errors
+		errors
 	}), {
 		status,
 		headers: {
