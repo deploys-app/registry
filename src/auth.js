@@ -35,6 +35,7 @@ export async function authorized (request, env, ctx) {
 	if (!project) {
 		return unauthorizedResponse
 	}
+	request.namespace = project
 
 	const perm = isPushRequest(request)
 		? pushPermission

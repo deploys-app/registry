@@ -423,10 +423,10 @@ router.put('/:name+/manifests/:reference',
 		const db = env.DB
 		const batch = [
 			db.prepare(`
-				insert into repositories (name)
-				values (?)
+				insert into repositories (name, namespace)
+				values (?, ?)
 				on conflict do nothing
-			`).bind(name),
+			`).bind(name, request.namespace),
 			db.prepare(`
 				insert into manifests (repository, digest)
 				values (?, ?)

@@ -1,8 +1,10 @@
 create table repositories (
 	name       text    not null,
+	namespace  text    not null,
 	created_at integer not null default current_timestamp,
 	primary key (name)
 );
+create index repositories_namespace_idx on repositories (namespace);
 
 create table manifests (
 	repository text    not null,
