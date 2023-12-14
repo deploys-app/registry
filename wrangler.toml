@@ -1,6 +1,6 @@
 name = "deploys--registry"
 main = "src/index.js"
-compatibility_date = "2023-05-18"
+compatibility_date = "2023-12-01"
 
 [route]
 pattern = "registry.deploys.app"

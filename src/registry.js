@@ -373,7 +373,7 @@ router.put('/:name+/blobs/uploads/:reference',
 			await env.BUCKET.put(`${name}/blobs/${digest}`, upload.body, {
 				sha256: digestToSHA256(digest)
 			})
-			await env.BUCKET.delete(`_uploads/${reference}`)
+			ctx.waitUntil(env.BUCKET.delete(`_uploads/${reference}`))
 			ctx.waitUntil(insertBlob(env.DB, name, digest, upload.size))
 			env.ANALYTICS.writeDataPoint({
 				blobs: ['put-blobs', request.namespace],
