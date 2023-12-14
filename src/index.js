@@ -38,6 +38,7 @@ router.all('*',
  * @typedef Env
  * @property {import('@cloudflare/workers-types').R2Bucket} BUCKET
  * @property {import('@cloudflare/workers-types').D1Database} DB
+ * @property {import('@cloudflare/workers-types').AnalyticsEngineDataset} ANALYTICS
  */
 
 export default {

@@ -34,6 +34,11 @@ router.get('/:name+/blobs/:digest+',
 		{
 			const resp = await cache.match(request)
 			if (resp) {
+				env.ANALYTICS.writeDataPoint({
+					blobs: ['get-blobs', name, 'hit'],
+					doubles: [resp.headers.get('content-length')],
+					indexes: [name]
+				})
 				return resp
 			}
 		}
@@ -51,6 +56,11 @@ router.get('/:name+/blobs/:digest+',
 			}
 		})
 		ctx.waitUntil(cache.put(request, resp.clone()))
+		env.ANALYTICS.writeDataPoint({
+			blobs: ['get-blobs', name, 'miss'],
+			doubles: [res.size],
+			indexes: [name]
+		})
 
 		return resp
 	}
@@ -96,6 +106,11 @@ router.get('/:name+/manifests/:reference',
 		{
 			const resp = await cache.match(request)
 			if (resp) {
+				env.ANALYTICS.writeDataPoint({
+					blobs: ['get-manifests', name, 'hit'],
+					doubles: [resp.headers.get('content-length')],
+					indexes: [name]
+				})
 				return resp
 			}
 		}
@@ -116,6 +131,11 @@ router.get('/:name+/manifests/:reference',
 			}
 		})
 		ctx.waitUntil(cache.put(request, resp.clone()))
+		env.ANALYTICS.writeDataPoint({
+			blobs: ['get-manifest', name, 'miss'],
+			doubles: [res.size],
+			indexes: [name]
+		})
 
 		return resp
 	}
@@ -355,6 +375,11 @@ router.put('/:name+/blobs/uploads/:reference',
 			})
 			await env.BUCKET.delete(`_uploads/${reference}`)
 			ctx.waitUntil(insertBlob(env.DB, name, digest, upload.size))
+			env.ANALYTICS.writeDataPoint({
+				blobs: ['put-blobs', name],
+				doubles: [upload.size],
+				indexes: [name]
+			})
 		}
 
 		return new Response(null, {
@@ -451,6 +476,11 @@ router.put('/:name+/manifests/:reference',
 			)
 		}
 		ctx.waitUntil(db.batch(batch))
+		env.ANALYTICS.writeDataPoint({
+			blobs: ['put-manifest', name],
+			doubles: [blob.size],
+			indexes: [name]
+		})
 
 		return new Response(null, {
 			status: 201,
@@ -536,6 +566,11 @@ router.delete('/:name+/manifests/:reference',
 				where repository = ? and tag = ?
 			`).bind(name, reference).run())
 		}
+		env.ANALYTICS.writeDataPoint({
+			blobs: ['delete-manifest', name],
+			doubles: [res.size],
+			indexes: [name]
+		})
 
 		return new Response(null, {
 			status: 202
@@ -564,6 +599,11 @@ router.delete('/:name+/blobs/:digest',
 			delete from blobs
 			where repository = ? and digest = ?
 		`).bind(name, digest).run())
+		env.ANALYTICS.writeDataPoint({
+			blobs: ['delete-blob', name],
+			doubles: [res.size],
+			indexes: [name]
+		})
 
 		return new Response(null, {
 			status: 202

@@ -15,3 +15,7 @@ bucket_name = "deploys-registry"
 [[d1_databases]]
 binding = "DB"
 database_id = "67b907e7-9d0d-4846-851e-8e7da80acbad"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "deploys_registry"
