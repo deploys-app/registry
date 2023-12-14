@@ -35,9 +35,9 @@ router.get('/:name+/blobs/:digest+',
 			const resp = await cache.match(request)
 			if (resp) {
 				env.ANALYTICS.writeDataPoint({
-					blobs: ['get-blobs', name, 'hit'],
+					blobs: ['get-blobs', request.namespace, 'hit'],
 					doubles: [resp.headers.get('content-length')],
-					indexes: [name]
+					indexes: [request.namespace]
 				})
 				return resp
 			}
@@ -57,9 +57,9 @@ router.get('/:name+/blobs/:digest+',
 		})
 		ctx.waitUntil(cache.put(request, resp.clone()))
 		env.ANALYTICS.writeDataPoint({
-			blobs: ['get-blobs', name, 'miss'],
+			blobs: ['get-blobs', request.namespace, 'miss'],
 			doubles: [res.size],
-			indexes: [name]
+			indexes: [request.namespace]
 		})
 
 		return resp
@@ -107,9 +107,9 @@ router.get('/:name+/manifests/:reference',
 			const resp = await cache.match(request)
 			if (resp) {
 				env.ANALYTICS.writeDataPoint({
-					blobs: ['get-manifests', name, 'hit'],
+					blobs: ['get-manifests', request.namespace, 'hit'],
 					doubles: [resp.headers.get('content-length')],
-					indexes: [name]
+					indexes: [request.namespace]
 				})
 				return resp
 			}
@@ -132,9 +132,9 @@ router.get('/:name+/manifests/:reference',
 		})
 		ctx.waitUntil(cache.put(request, resp.clone()))
 		env.ANALYTICS.writeDataPoint({
-			blobs: ['get-manifest', name, 'miss'],
+			blobs: ['get-manifest', request.namespace, 'miss'],
 			doubles: [res.size],
-			indexes: [name]
+			indexes: [request.namespace]
 		})
 
 		return resp
@@ -376,9 +376,9 @@ router.put('/:name+/blobs/uploads/:reference',
 			await env.BUCKET.delete(`_uploads/${reference}`)
 			ctx.waitUntil(insertBlob(env.DB, name, digest, upload.size))
 			env.ANALYTICS.writeDataPoint({
-				blobs: ['put-blobs', name],
+				blobs: ['put-blobs', request.namespace],
 				doubles: [upload.size],
-				indexes: [name]
+				indexes: [request.namespace]
 			})
 		}
 
@@ -477,9 +477,9 @@ router.put('/:name+/manifests/:reference',
 		}
 		ctx.waitUntil(db.batch(batch))
 		env.ANALYTICS.writeDataPoint({
-			blobs: ['put-manifest', name],
+			blobs: ['put-manifest', request.namespace],
 			doubles: [blob.size],
-			indexes: [name]
+			indexes: [request.namespace]
 		})
 
 		return new Response(null, {
@@ -567,9 +567,9 @@ router.delete('/:name+/manifests/:reference',
 			`).bind(name, reference).run())
 		}
 		env.ANALYTICS.writeDataPoint({
-			blobs: ['delete-manifest', name],
+			blobs: ['delete-manifest', request.namespace],
 			doubles: [res.size],
-			indexes: [name]
+			indexes: [request.namespace]
 		})
 
 		return new Response(null, {
@@ -600,9 +600,9 @@ router.delete('/:name+/blobs/:digest',
 			where repository = ? and digest = ?
 		`).bind(name, digest).run())
 		env.ANALYTICS.writeDataPoint({
-			blobs: ['delete-blob', name],
+			blobs: ['delete-blob', request.namespace],
 			doubles: [res.size],
-			indexes: [name]
+			indexes: [request.namespace]
 		})
 
 		return new Response(null, {
