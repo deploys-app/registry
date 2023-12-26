@@ -32,7 +32,7 @@ router.post('/list',
 
 		const auth = request.headers.get('authorization') ?? ''
 		if (!await checkPermission(auth, project, listPermission, env, ctx)) {
-			return error('api: unauthorized')
+			return error('iam: forbidden')
 		}
 
 		const db = env.DB
@@ -70,7 +70,7 @@ router.post('/get',
 
 		const auth = request.headers.get('authorization') ?? ''
 		if (!await checkPermission(auth, project, getPermission, env, ctx)) {
-			return error('api: unauthorized')
+			return error('iam: forbidden')
 		}
 
 		const db = env.DB
@@ -119,7 +119,7 @@ router.post('/getTags',
 
 		const auth = request.headers.get('authorization') ?? ''
 		if (!await checkPermission(auth, project, getPermission, env, ctx)) {
-			return error('api: unauthorized')
+			return error('iam: forbidden')
 		}
 
 		const db = env.DB
@@ -172,7 +172,7 @@ router.post('/getManifests',
 
 		const auth = request.headers.get('authorization') ?? ''
 		if (!await checkPermission(auth, project, getPermission, env, ctx)) {
-			return error('api: unauthorized')
+			return error('iam: forbidden')
 		}
 
 		const db = env.DB
