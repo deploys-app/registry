@@ -2,6 +2,7 @@
   "name": "registry",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
@@ -9,10 +10,11 @@
     "lint": "eslint ./src"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20231121.0",
-    "dayjs": "^1.11.10",
-    "eslint": "^8.55.0",
+    "@cloudflare/workers-types": "^4.20240729.0",
+    "@eslint/js": "^9.8.0",
+    "dayjs": "^1.11.12",
+    "eslint": "^9.8.0",
     "itty-router": "^4.0.23",
-    "wrangler": "^3.20.0"
+    "wrangler": "^3.68.0"
   }
 }
