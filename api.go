@@ -52,8 +52,8 @@ func (a *App) apiList(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	type item struct {
-		Name      string `json:"name"`
-		CreatedAt string `json:"createdAt"`
+		Name      string    `json:"name"`
+		CreatedAt time.Time `json:"createdAt"`
 	}
 	items := []item{}
 	prefix := req.Project + "/"
@@ -65,7 +65,7 @@ func (a *App) apiList(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, item{
 			Name:      strings.TrimPrefix(name, prefix),
-			CreatedAt: formatTime(createdAt),
+			CreatedAt: createdAt,
 		})
 		return nil
 	}, `
@@ -127,7 +127,7 @@ func (a *App) apiGet(w http.ResponseWriter, r *http.Request) {
 	apiOK(w, map[string]any{
 		"name":      strings.TrimPrefix(name, req.Project+"/"),
 		"size":      size,
-		"createdAt": formatTime(createdAt),
+		"createdAt": createdAt,
 	})
 }
 
@@ -167,9 +167,9 @@ func (a *App) apiGetTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type item struct {
-		Tag       string `json:"tag"`
-		Digest    string `json:"digest"`
-		CreatedAt string `json:"createdAt"`
+		Tag       string    `json:"tag"`
+		Digest    string    `json:"digest"`
+		CreatedAt time.Time `json:"createdAt"`
 	}
 	items := []item{}
 	err = pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
@@ -178,7 +178,7 @@ func (a *App) apiGetTags(w http.ResponseWriter, r *http.Request) {
 		if err := scan(&it.Tag, &it.Digest, &createdAt); err != nil {
 			return err
 		}
-		it.CreatedAt = formatTime(createdAt)
+		it.CreatedAt = createdAt
 		items = append(items, it)
 		return nil
 	}, `
@@ -234,8 +234,8 @@ func (a *App) apiGetManifests(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type item struct {
-		Digest    string `json:"digest"`
-		CreatedAt string `json:"createdAt"`
+		Digest    string    `json:"digest"`
+		CreatedAt time.Time `json:"createdAt"`
 	}
 	items := []item{}
 	err = pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
@@ -244,7 +244,7 @@ func (a *App) apiGetManifests(w http.ResponseWriter, r *http.Request) {
 		if err := scan(&it.Digest, &createdAt); err != nil {
 			return err
 		}
-		it.CreatedAt = formatTime(createdAt)
+		it.CreatedAt = createdAt
 		items = append(items, it)
 		return nil
 	}, `
@@ -284,13 +284,4 @@ func apiProtocolError(w http.ResponseWriter, status int, message string) {
 		"ok":    false,
 		"error": map[string]any{"message": message},
 	})
-}
-
-func formatTime(t time.Time) string {
-	s := t.UTC().Format(time.RFC3339)
-	// trim sub-second
-	if i := strings.IndexByte(s, '.'); i >= 0 {
-		s = s[:i] + "Z"
-	}
-	return s
 }
