@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/storage"
+	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
@@ -493,7 +494,15 @@ func (a *App) listTags(w http.ResponseWriter, r *http.Request, name string) {
 	}
 	last := q.Get("last")
 
-	rows, err := pgctx.Query(ctx, `
+	tags := []string{}
+	err := pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
+		var tag string
+		if err := scan(&tag); err != nil {
+			return err
+		}
+		tags = append(tags, tag)
+		return nil
+	}, `
 		select tag from tags
 		where repository = $1
 		  and ($2 = '' or tag > $2)
@@ -503,15 +512,6 @@ func (a *App) listTags(w http.ResponseWriter, r *http.Request, name string) {
 	if err != nil {
 		registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
-	}
-	defer rows.Close()
-
-	tags := []string{}
-	for rows.Next() {
-		var tag string
-		if err := rows.Scan(&tag); err == nil {
-			tags = append(tags, tag)
-		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

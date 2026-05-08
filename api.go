@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
 )
 
@@ -50,7 +51,24 @@ func (a *App) apiList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	rows, err := pgctx.Query(ctx, `
+	type item struct {
+		Name      string `json:"name"`
+		CreatedAt string `json:"createdAt"`
+	}
+	items := []item{}
+	prefix := req.Project + "/"
+	err := pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
+		var name string
+		var createdAt time.Time
+		if err := scan(&name, &createdAt); err != nil {
+			return err
+		}
+		items = append(items, item{
+			Name:      strings.TrimPrefix(name, prefix),
+			CreatedAt: formatTime(createdAt),
+		})
+		return nil
+	}, `
 		select name, created_at
 		from repositories
 		where namespace = $1
@@ -59,25 +77,6 @@ func (a *App) apiList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apiError(w, "internal error")
 		return
-	}
-	defer rows.Close()
-
-	type item struct {
-		Name      string `json:"name"`
-		CreatedAt string `json:"createdAt"`
-	}
-	items := []item{}
-	prefix := req.Project + "/"
-	for rows.Next() {
-		var name string
-		var createdAt time.Time
-		if err := rows.Scan(&name, &createdAt); err != nil {
-			continue
-		}
-		items = append(items, item{
-			Name:      strings.TrimPrefix(name, prefix),
-			CreatedAt: formatTime(createdAt),
-		})
 	}
 
 	apiOK(w, map[string]any{"items": items})
@@ -167,7 +166,22 @@ func (a *App) apiGetTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := pgctx.Query(ctx, `
+	type item struct {
+		Tag       string `json:"tag"`
+		Digest    string `json:"digest"`
+		CreatedAt string `json:"createdAt"`
+	}
+	items := []item{}
+	err = pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
+		var it item
+		var createdAt time.Time
+		if err := scan(&it.Tag, &it.Digest, &createdAt); err != nil {
+			return err
+		}
+		it.CreatedAt = formatTime(createdAt)
+		items = append(items, it)
+		return nil
+	}, `
 		select tag, digest, created_at
 		from tags
 		where repository = $1
@@ -176,23 +190,6 @@ func (a *App) apiGetTags(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apiError(w, "internal error")
 		return
-	}
-	defer rows.Close()
-
-	type item struct {
-		Tag       string `json:"tag"`
-		Digest    string `json:"digest"`
-		CreatedAt string `json:"createdAt"`
-	}
-	items := []item{}
-	for rows.Next() {
-		var it item
-		var createdAt time.Time
-		if err := rows.Scan(&it.Tag, &it.Digest, &createdAt); err != nil {
-			continue
-		}
-		it.CreatedAt = formatTime(createdAt)
-		items = append(items, it)
 	}
 
 	apiOK(w, map[string]any{
@@ -236,7 +233,21 @@ func (a *App) apiGetManifests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := pgctx.Query(ctx, `
+	type item struct {
+		Digest    string `json:"digest"`
+		CreatedAt string `json:"createdAt"`
+	}
+	items := []item{}
+	err = pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
+		var it item
+		var createdAt time.Time
+		if err := scan(&it.Digest, &createdAt); err != nil {
+			return err
+		}
+		it.CreatedAt = formatTime(createdAt)
+		items = append(items, it)
+		return nil
+	}, `
 		select digest, created_at
 		from manifests
 		where repository = $1
@@ -245,22 +256,6 @@ func (a *App) apiGetManifests(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apiError(w, "internal error")
 		return
-	}
-	defer rows.Close()
-
-	type item struct {
-		Digest    string `json:"digest"`
-		CreatedAt string `json:"createdAt"`
-	}
-	items := []item{}
-	for rows.Next() {
-		var it item
-		var createdAt time.Time
-		if err := rows.Scan(&it.Digest, &createdAt); err != nil {
-			continue
-		}
-		it.CreatedAt = formatTime(createdAt)
-		items = append(items, it)
 	}
 
 	apiOK(w, map[string]any{
