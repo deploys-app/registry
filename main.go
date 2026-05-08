@@ -61,7 +61,8 @@ func main() {
 	srv.Addr = ":" + port
 	srv.Use(healthz.New())
 	srv.Use(logger.Stdout())
-	srv.Handler = pgctx.Middleware(db)(mux)
+	srv.UseFunc(pgctx.Middleware(db))
+	srv.Handler = mux
 
 	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("listen and serve", "error", err)
