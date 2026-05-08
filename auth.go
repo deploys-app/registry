@@ -22,11 +22,28 @@ const (
 
 type contextKey int
 
-const namespaceKey contextKey = iota
+const (
+	namespaceKey contextKey = iota
+	authKey
+)
 
 func namespaceFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(namespaceKey).(string)
 	return v
+}
+
+func authFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(authKey).(string)
+	return v
+}
+
+func authInfoMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "" {
+			r = r.WithContext(context.WithValue(r.Context(), authKey, auth))
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type cacheEntry[T any] struct {
@@ -74,7 +91,8 @@ func getEmail(auth string) string {
 	return res.Result.Email
 }
 
-func checkPermission(auth, project, permission string) bool {
+func checkPermission(ctx context.Context, project, permission string) bool {
+	auth := authFromContext(ctx)
 	if auth == "" {
 		return false
 	}
@@ -132,6 +150,9 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		ctx := context.WithValue(r.Context(), authKey, auth)
+		r = r.WithContext(ctx)
+
 		path := r.URL.Path
 		if path == "/v2/" {
 			if getEmail(auth) == "" {
@@ -148,10 +169,11 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), namespaceKey, project)
+		ctx = context.WithValue(ctx, namespaceKey, project)
+		r = r.WithContext(ctx)
 
-		if checkPermission(auth, project, permPush) {
-			next.ServeHTTP(w, r.WithContext(ctx))
+		if checkPermission(ctx, project, permPush) {
+			next.ServeHTTP(w, r)
 			return
 		}
 
@@ -160,8 +182,8 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if checkPermission(auth, project, permPull) {
-			next.ServeHTTP(w, r.WithContext(ctx))
+		if checkPermission(ctx, project, permPull) {
+			next.ServeHTTP(w, r)
 			return
 		}
 

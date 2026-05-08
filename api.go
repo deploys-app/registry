@@ -13,10 +13,12 @@ import (
 
 func (a *App) mountAPI(mux *http.ServeMux) {
 	m := arpc.New()
-	mux.Handle("/api/list", m.Handler(a.apiList))
-	mux.Handle("/api/get", m.Handler(a.apiGet))
-	mux.Handle("/api/getTags", m.Handler(a.apiGetTags))
-	mux.Handle("/api/getManifests", m.Handler(a.apiGetManifests))
+	api := http.NewServeMux()
+	api.Handle("/api/list", m.Handler(a.apiList))
+	api.Handle("/api/get", m.Handler(a.apiGet))
+	api.Handle("/api/getTags", m.Handler(a.apiGetTags))
+	api.Handle("/api/getManifests", m.Handler(a.apiGetManifests))
+	mux.Handle("/api/", authInfoMiddleware(api))
 }
 
 // list
@@ -41,8 +43,8 @@ type apiListResult struct {
 	Items []apiListItem `json:"items"`
 }
 
-func (a *App) apiList(ctx context.Context, r *http.Request, req *apiListRequest) (*apiListResult, error) {
-	if !checkPermission(r.Header.Get("Authorization"), req.Project, permList) {
+func (a *App) apiList(ctx context.Context, req *apiListRequest) (*apiListResult, error) {
+	if !checkPermission(ctx, req.Project, permList) {
 		return nil, arpc.NewError("iam: forbidden")
 	}
 
@@ -98,8 +100,8 @@ type apiGetResult struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-func (a *App) apiGet(ctx context.Context, r *http.Request, req *apiGetRequest) (*apiGetResult, error) {
-	if !checkPermission(r.Header.Get("Authorization"), req.Project, permGet) {
+func (a *App) apiGet(ctx context.Context, req *apiGetRequest) (*apiGetResult, error) {
+	if !checkPermission(ctx, req.Project, permGet) {
 		return nil, arpc.NewError("iam: forbidden")
 	}
 
@@ -156,8 +158,8 @@ type apiGetTagsResult struct {
 	Items []apiTagItem `json:"items"`
 }
 
-func (a *App) apiGetTags(ctx context.Context, r *http.Request, req *apiGetTagsRequest) (*apiGetTagsResult, error) {
-	if !checkPermission(r.Header.Get("Authorization"), req.Project, permGet) {
+func (a *App) apiGetTags(ctx context.Context, req *apiGetTagsRequest) (*apiGetTagsResult, error) {
+	if !checkPermission(ctx, req.Project, permGet) {
 		return nil, arpc.NewError("iam: forbidden")
 	}
 
@@ -225,8 +227,8 @@ type apiGetManifestsResult struct {
 	Items []apiManifestItem `json:"items"`
 }
 
-func (a *App) apiGetManifests(ctx context.Context, r *http.Request, req *apiGetManifestsRequest) (*apiGetManifestsResult, error) {
-	if !checkPermission(r.Header.Get("Authorization"), req.Project, permGet) {
+func (a *App) apiGetManifests(ctx context.Context, req *apiGetManifestsRequest) (*apiGetManifestsResult, error) {
+	if !checkPermission(ctx, req.Project, permGet) {
 		return nil, arpc.NewError("iam: forbidden")
 	}
 
