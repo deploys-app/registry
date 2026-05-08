@@ -52,7 +52,7 @@ func main() {
 		w.Write([]byte("Deploys.app Registry Service"))
 	})
 	mux.Handle("/v2/", authMiddleware(http.HandlerFunc(app.registryHandler)))
-	mux.Handle("/api/", http.HandlerFunc(app.apiHandler))
+	app.mountAPI(mux)
 
 	port := config.StringDefault("PORT", "8080")
 	slog.Info("start registry", "addr", ":"+port)

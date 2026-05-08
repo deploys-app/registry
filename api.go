@@ -1,61 +1,52 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/acoshift/arpc/v2"
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
 )
 
-func (a *App) apiHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		apiProtocolError(w, http.StatusBadRequest, "method not allowed")
-		return
-	}
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		apiProtocolError(w, http.StatusBadRequest, "unsupported content type")
-		return
-	}
-
-	path := strings.TrimPrefix(r.URL.Path, "/api")
-	switch path {
-	case "/list":
-		a.apiList(w, r)
-	case "/get":
-		a.apiGet(w, r)
-	case "/getTags":
-		a.apiGetTags(w, r)
-	case "/getManifests":
-		a.apiGetManifests(w, r)
-	default:
-		apiProtocolError(w, http.StatusBadRequest, "not found")
-	}
+func (a *App) mountAPI(mux *http.ServeMux) {
+	m := arpc.New()
+	mux.Handle("/api/list", m.Handler(a.apiList))
+	mux.Handle("/api/get", m.Handler(a.apiGet))
+	mux.Handle("/api/getTags", m.Handler(a.apiGetTags))
+	mux.Handle("/api/getManifests", m.Handler(a.apiGetManifests))
 }
 
-func (a *App) apiList(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Project string `json:"project"`
+// list
+
+type apiListRequest struct {
+	Project string `json:"project"`
+}
+
+func (r *apiListRequest) Valid() error {
+	if r.Project == "" {
+		return arpc.NewError("project required")
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Project == "" {
-		apiError(w, "project required")
-		return
+	return nil
+}
+
+type apiListItem struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type apiListResult struct {
+	Items []apiListItem `json:"items"`
+}
+
+func (a *App) apiList(ctx context.Context, r *http.Request, req *apiListRequest) (*apiListResult, error) {
+	if !checkPermission(r.Header.Get("Authorization"), req.Project, permList) {
+		return nil, arpc.NewError("iam: forbidden")
 	}
 
-	auth := r.Header.Get("Authorization")
-	if !checkPermission(auth, req.Project, permList) {
-		apiError(w, "iam: forbidden")
-		return
-	}
-
-	ctx := r.Context()
-	type item struct {
-		Name      string    `json:"name"`
-		CreatedAt time.Time `json:"createdAt"`
-	}
-	items := []item{}
+	var items []apiListItem
 	prefix := req.Project + "/"
 	err := pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
 		var name string
@@ -63,7 +54,7 @@ func (a *App) apiList(w http.ResponseWriter, r *http.Request) {
 		if err := scan(&name, &createdAt); err != nil {
 			return err
 		}
-		items = append(items, item{
+		items = append(items, apiListItem{
 			Name:      strings.TrimPrefix(name, prefix),
 			CreatedAt: createdAt,
 		})
@@ -75,34 +66,43 @@ func (a *App) apiList(w http.ResponseWriter, r *http.Request) {
 		order by name
 	`, req.Project)
 	if err != nil {
-		apiError(w, "internal error")
-		return
+		return nil, err
 	}
 
-	apiOK(w, map[string]any{"items": items})
+	if items == nil {
+		items = []apiListItem{}
+	}
+	return &apiListResult{Items: items}, nil
 }
 
-func (a *App) apiGet(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Project    string `json:"project"`
-		Repository string `json:"repository"`
+// get
+
+type apiGetRequest struct {
+	Project    string `json:"project"`
+	Repository string `json:"repository"`
+}
+
+func (r *apiGetRequest) Valid() error {
+	if r.Project == "" {
+		return arpc.NewError("project required")
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Project == "" {
-		apiError(w, "project required")
-		return
+	if r.Repository == "" {
+		return arpc.NewError("repository required")
 	}
-	if req.Repository == "" {
-		apiError(w, "repository required")
-		return
+	return nil
+}
+
+type apiGetResult struct {
+	Name      string    `json:"name"`
+	Size      *int64    `json:"size"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (a *App) apiGet(ctx context.Context, r *http.Request, req *apiGetRequest) (*apiGetResult, error) {
+	if !checkPermission(r.Header.Get("Authorization"), req.Project, permGet) {
+		return nil, arpc.NewError("iam: forbidden")
 	}
 
-	auth := r.Header.Get("Authorization")
-	if !checkPermission(auth, req.Project, permGet) {
-		apiError(w, "iam: forbidden")
-		return
-	}
-
-	ctx := r.Context()
 	fullName := req.Project + "/" + req.Repository
 
 	var name string
@@ -113,72 +113,70 @@ func (a *App) apiGet(w http.ResponseWriter, r *http.Request) {
 		where name = $1 and namespace = $2
 	`, fullName, req.Project).Scan(&name, &createdAt)
 	if err != nil {
-		apiError(w, "repository not found")
-		return
+		return nil, arpc.NewError("repository not found")
 	}
 
 	var size *int64
 	pgctx.QueryRow(ctx, `
-		select sum(size)
-		from blobs
-		where repository = $1
+		select sum(size) from blobs where repository = $1
 	`, fullName).Scan(&size)
 
-	apiOK(w, map[string]any{
-		"name":      strings.TrimPrefix(name, req.Project+"/"),
-		"size":      size,
-		"createdAt": createdAt,
-	})
+	return &apiGetResult{
+		Name:      strings.TrimPrefix(name, req.Project+"/"),
+		Size:      size,
+		CreatedAt: createdAt,
+	}, nil
 }
 
-func (a *App) apiGetTags(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Project    string `json:"project"`
-		Repository string `json:"repository"`
+// getTags
+
+type apiGetTagsRequest struct {
+	Project    string `json:"project"`
+	Repository string `json:"repository"`
+}
+
+func (r *apiGetTagsRequest) Valid() error {
+	if r.Project == "" {
+		return arpc.NewError("project required")
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Project == "" {
-		apiError(w, "project required")
-		return
+	if r.Repository == "" {
+		return arpc.NewError("repository required")
 	}
-	if req.Repository == "" {
-		apiError(w, "repository required")
-		return
+	return nil
+}
+
+type apiTagItem struct {
+	Tag       string    `json:"tag"`
+	Digest    string    `json:"digest"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type apiGetTagsResult struct {
+	Name  string       `json:"name"`
+	Items []apiTagItem `json:"items"`
+}
+
+func (a *App) apiGetTags(ctx context.Context, r *http.Request, req *apiGetTagsRequest) (*apiGetTagsResult, error) {
+	if !checkPermission(r.Header.Get("Authorization"), req.Project, permGet) {
+		return nil, arpc.NewError("iam: forbidden")
 	}
 
-	auth := r.Header.Get("Authorization")
-	if !checkPermission(auth, req.Project, permGet) {
-		apiError(w, "iam: forbidden")
-		return
-	}
-
-	ctx := r.Context()
 	fullName := req.Project + "/" + req.Repository
 
 	var repoName string
-	var repoCreatedAt time.Time
 	err := pgctx.QueryRow(ctx, `
-		select name, created_at
-		from repositories
-		where name = $1 and namespace = $2
-	`, fullName, req.Project).Scan(&repoName, &repoCreatedAt)
+		select name from repositories where name = $1 and namespace = $2
+	`, fullName, req.Project).Scan(&repoName)
 	if err != nil {
-		apiError(w, "repository not found")
-		return
+		return nil, arpc.NewError("repository not found")
 	}
 
-	type item struct {
-		Tag       string    `json:"tag"`
-		Digest    string    `json:"digest"`
-		CreatedAt time.Time `json:"createdAt"`
-	}
-	items := []item{}
+	var items []apiTagItem
 	err = pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
-		var it item
-		var createdAt time.Time
-		if err := scan(&it.Tag, &it.Digest, &createdAt); err != nil {
+		var it apiTagItem
+		if err := scan(&it.Tag, &it.Digest, &it.CreatedAt); err != nil {
 			return err
 		}
-		it.CreatedAt = createdAt
 		items = append(items, it)
 		return nil
 	}, `
@@ -188,63 +186,66 @@ func (a *App) apiGetTags(w http.ResponseWriter, r *http.Request) {
 		order by created_at desc
 	`, fullName)
 	if err != nil {
-		apiError(w, "internal error")
-		return
+		return nil, err
 	}
 
-	apiOK(w, map[string]any{
-		"name":  strings.TrimPrefix(repoName, req.Project+"/"),
-		"items": items,
-	})
+	if items == nil {
+		items = []apiTagItem{}
+	}
+	return &apiGetTagsResult{
+		Name:  strings.TrimPrefix(repoName, req.Project+"/"),
+		Items: items,
+	}, nil
 }
 
-func (a *App) apiGetManifests(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Project    string `json:"project"`
-		Repository string `json:"repository"`
+// getManifests
+
+type apiGetManifestsRequest struct {
+	Project    string `json:"project"`
+	Repository string `json:"repository"`
+}
+
+func (r *apiGetManifestsRequest) Valid() error {
+	if r.Project == "" {
+		return arpc.NewError("project required")
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Project == "" {
-		apiError(w, "project required")
-		return
+	if r.Repository == "" {
+		return arpc.NewError("repository required")
 	}
-	if req.Repository == "" {
-		apiError(w, "repository required")
-		return
+	return nil
+}
+
+type apiManifestItem struct {
+	Digest    string    `json:"digest"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type apiGetManifestsResult struct {
+	Name  string            `json:"name"`
+	Items []apiManifestItem `json:"items"`
+}
+
+func (a *App) apiGetManifests(ctx context.Context, r *http.Request, req *apiGetManifestsRequest) (*apiGetManifestsResult, error) {
+	if !checkPermission(r.Header.Get("Authorization"), req.Project, permGet) {
+		return nil, arpc.NewError("iam: forbidden")
 	}
 
-	auth := r.Header.Get("Authorization")
-	if !checkPermission(auth, req.Project, permGet) {
-		apiError(w, "iam: forbidden")
-		return
-	}
-
-	ctx := r.Context()
 	fullName := req.Project + "/" + req.Repository
 
 	var repoName string
-	var repoCreatedAt time.Time
 	err := pgctx.QueryRow(ctx, `
-		select name, created_at
-		from repositories
-		where name = $1 and namespace = $2
-	`, fullName, req.Project).Scan(&repoName, &repoCreatedAt)
+		select name from repositories where name = $1 and namespace = $2
+	`, fullName, req.Project).Scan(&repoName)
 	if err != nil {
-		apiError(w, "repository not found")
-		return
+		return nil, arpc.NewError("repository not found")
 	}
 
-	type item struct {
-		Digest    string    `json:"digest"`
-		CreatedAt time.Time `json:"createdAt"`
-	}
-	items := []item{}
+	var items []apiManifestItem
 	err = pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
-		var it item
-		var createdAt time.Time
-		if err := scan(&it.Digest, &createdAt); err != nil {
+		var it apiManifestItem
+		if err := scan(&it.Digest, &it.CreatedAt); err != nil {
 			return err
 		}
-		it.CreatedAt = createdAt
 		items = append(items, it)
 		return nil
 	}, `
@@ -254,34 +255,14 @@ func (a *App) apiGetManifests(w http.ResponseWriter, r *http.Request) {
 		order by created_at desc
 	`, fullName)
 	if err != nil {
-		apiError(w, "internal error")
-		return
+		return nil, err
 	}
 
-	apiOK(w, map[string]any{
-		"name":  strings.TrimPrefix(repoName, req.Project+"/"),
-		"items": items,
-	})
-}
-
-func apiOK(w http.ResponseWriter, result any) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": result})
-}
-
-func apiError(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"ok":    false,
-		"error": map[string]any{"message": message},
-	})
-}
-
-func apiProtocolError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]any{
-		"ok":    false,
-		"error": map[string]any{"message": message},
-	})
+	if items == nil {
+		items = []apiManifestItem{}
+	}
+	return &apiGetManifestsResult{
+		Name:  strings.TrimPrefix(repoName, req.Project+"/"),
+		Items: items,
+	}, nil
 }
