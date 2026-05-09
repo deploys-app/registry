@@ -47,11 +47,7 @@ func main() {
 	app := &App{Bucket: bucket}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Deploys.app Registry Service"))
 	})
 	mux.Handle("/v2/", authMiddleware(http.HandlerFunc(app.registryHandler)))
