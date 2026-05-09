@@ -358,7 +358,12 @@ func (a *App) patchUpload(w http.ResponseWriter, r *http.Request, name, referenc
 		slog.Debug("patch upload empty chunk ignored", "name", name, "reference", reference)
 	}
 
+	end := state.Size - 1
+	if end < 0 {
+		end = 0
+	}
 	w.Header().Set("Location", uploadLocation(name, reference, state))
+	w.Header().Set("Range", fmt.Sprintf("0-%d", end))
 	w.WriteHeader(http.StatusAccepted)
 }
 
