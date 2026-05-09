@@ -5,8 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sync"
 	"time"
+
+	"github.com/moonrhythm/cachestore"
 )
 
 const (
@@ -46,22 +47,10 @@ func authInfoMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-type cacheEntry[T any] struct {
-	value  T
-	expiry time.Time
-}
-
-var (
-	emailCache sync.Map
-	permCache  sync.Map
-)
-
 func getEmail(auth string) string {
-	if v, ok := emailCache.Load(auth); ok {
-		e := v.(cacheEntry[string])
-		if time.Now().Before(e.expiry) {
-			return e.value
-		}
+	cacheKey := "registry|email|" + auth
+	if v, ok := cachestore.Get[string](cacheKey); ok {
+		return v
 	}
 
 	req, _ := http.NewRequest(http.MethodPost, infoEndpoint, bytes.NewReader([]byte(`{}`)))
@@ -87,7 +76,7 @@ func getEmail(auth string) string {
 		return ""
 	}
 
-	emailCache.Store(auth, cacheEntry[string]{value: res.Result.Email, expiry: time.Now().Add(cacheTTL)})
+	cachestore.Set(cacheKey, res.Result.Email, &cachestore.SetOptions{TTL: cacheTTL})
 	return res.Result.Email
 }
 
@@ -97,12 +86,9 @@ func checkPermission(ctx context.Context, project, permission string) bool {
 		return false
 	}
 
-	key := auth + "|" + project + "|" + permission
-	if v, ok := permCache.Load(key); ok {
-		e := v.(cacheEntry[bool])
-		if time.Now().Before(e.expiry) {
-			return e.value
-		}
+	cacheKey := "registry|perm|" + auth + "|" + project + "|" + permission
+	if v, ok := cachestore.Get[bool](cacheKey); ok {
+		return v
 	}
 
 	body, _ := json.Marshal(map[string]any{
@@ -138,7 +124,7 @@ func checkPermission(ctx context.Context, project, permission string) bool {
 	}
 
 	ok := res.OK && res.Result.Authorized && res.Result.Project.BillingAccount.Active
-	permCache.Store(key, cacheEntry[bool]{value: ok, expiry: time.Now().Add(cacheTTL)})
+	cachestore.Set(cacheKey, ok, &cachestore.SetOptions{TTL: cacheTTL})
 	return ok
 }
 

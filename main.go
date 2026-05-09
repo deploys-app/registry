@@ -12,6 +12,7 @@ import (
 	"github.com/acoshift/configfile"
 	"github.com/acoshift/pgsql/pgctx"
 	_ "github.com/lib/pq"
+	"github.com/moonrhythm/cachestore"
 	"github.com/moonrhythm/parapet"
 	"github.com/moonrhythm/parapet/pkg/healthz"
 	"github.com/moonrhythm/parapet/pkg/logger"
@@ -21,6 +22,8 @@ var config = configfile.NewEnvReader()
 
 func main() {
 	ctx := context.Background()
+
+	go cachestore.RunGCInterval(ctx, time.Hour)
 
 	db, err := sql.Open("postgres", config.MustString("db_url"))
 	if err != nil {
