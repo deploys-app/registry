@@ -38,7 +38,7 @@ func authFromContext(ctx context.Context) string {
 	return v
 }
 
-func authInfoMiddleware(next http.Handler) http.Handler {
+func apiAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth := r.Header.Get("Authorization"); auth != "" {
 			r = r.WithContext(context.WithValue(r.Context(), authKey, auth))

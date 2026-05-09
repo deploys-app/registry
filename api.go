@@ -14,11 +14,11 @@ import (
 func (a *App) mountAPI(mux *http.ServeMux) {
 	m := arpc.New()
 	api := http.NewServeMux()
-	api.Handle("/api/list", m.Handler(a.apiList))
-	api.Handle("/api/get", m.Handler(a.apiGet))
-	api.Handle("/api/getTags", m.Handler(a.apiGetTags))
-	api.Handle("/api/getManifests", m.Handler(a.apiGetManifests))
-	mux.Handle("/api/", authInfoMiddleware(api))
+	api.Handle("POST /api/list", m.Handler(a.apiList))
+	api.Handle("POST /api/get", m.Handler(a.apiGet))
+	api.Handle("POST /api/getTags", m.Handler(a.apiGetTags))
+	api.Handle("POST /api/getManifests", m.Handler(a.apiGetManifests))
+	mux.Handle("/api/", apiAuthMiddleware(api))
 }
 
 // list
