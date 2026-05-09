@@ -40,7 +40,7 @@ docker run -e DB_URL=... -e BUCKET_NAME=... registry
 Apply the schema before first run:
 
 ```sh
-psql $DB_URL -f schema_pg.sql
+psql $DB_URL -f schema.sql
 ```
 
 ## API
