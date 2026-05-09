@@ -4,8 +4,11 @@
 //
 //	CLOUDFLARE_API_TOKEN  - Cloudflare API token
 //	CLOUDFLARE_ACCOUNT_ID - Cloudflare account ID
-//	D1_DATABASE_ID        - D1 database ID (default: 67b907e7-9d0d-4846-851e-8e7da80acbad)
 //	DB_URL                - PostgreSQL connection string
+//
+// Optional env vars:
+//
+//	D1_DATABASE_ID - D1 database ID (default: 67b907e7-9d0d-4846-851e-8e7da80acbad)
 package main
 
 import (
@@ -21,6 +24,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/acoshift/pgsql/pgstmt"
 )
 
 const (
@@ -90,26 +94,16 @@ func migrateRepositories(ctx context.Context, d1 *d1Client, db *sql.DB) error {
 		if len(rows) == 0 {
 			break
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			name := str(row["name"])
-			namespace := str(row["namespace"])
-			createdAt := parseTime(row["created_at"])
-			_, err := tx.ExecContext(ctx, `
-				insert into repositories (name, namespace, created_at)
-				values ($1, $2, $3)
-				on conflict do nothing
-			`, name, namespace, createdAt)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("insert repository %s: %w", name, err)
+		q := pgstmt.Insert(func(b pgstmt.InsertStatement) {
+			b.Into("repositories")
+			b.Columns("name", "namespace", "created_at")
+			for _, row := range rows {
+				b.Value(str(row["name"]), str(row["namespace"]), parseTime(row["created_at"]))
 			}
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+			b.OnConflictDoNothing()
+		})
+		if _, err := q.ExecContext(ctx, db.ExecContext); err != nil {
+			return fmt.Errorf("insert repositories: %w", err)
 		}
 		total += len(rows)
 		slog.Info("repositories", "count", total)
@@ -137,27 +131,16 @@ func migrateManifests(ctx context.Context, d1 *d1Client, db *sql.DB) error {
 		if len(rows) == 0 {
 			break
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			repo := str(row["repository"])
-			digest := str(row["digest"])
-			createdAt := parseTime(row["created_at"])
-			updatedAt := parseTime(row["updated_at"])
-			_, err := tx.ExecContext(ctx, `
-				insert into manifests (repository, digest, created_at, updated_at)
-				values ($1, $2, $3, $4)
-				on conflict do nothing
-			`, repo, digest, createdAt, updatedAt)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("insert manifest %s@%s: %w", repo, digest, err)
+		q := pgstmt.Insert(func(b pgstmt.InsertStatement) {
+			b.Into("manifests")
+			b.Columns("repository", "digest", "created_at", "updated_at")
+			for _, row := range rows {
+				b.Value(str(row["repository"]), str(row["digest"]), parseTime(row["created_at"]), parseTime(row["updated_at"]))
 			}
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+			b.OnConflictDoNothing()
+		})
+		if _, err := q.ExecContext(ctx, db.ExecContext); err != nil {
+			return fmt.Errorf("insert manifests: %w", err)
 		}
 		total += len(rows)
 		slog.Info("manifests", "count", total)
@@ -185,27 +168,16 @@ func migrateTags(ctx context.Context, d1 *d1Client, db *sql.DB) error {
 		if len(rows) == 0 {
 			break
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			repo := str(row["repository"])
-			tag := str(row["tag"])
-			digest := str(row["digest"])
-			createdAt := parseTime(row["created_at"])
-			_, err := tx.ExecContext(ctx, `
-				insert into tags (repository, tag, digest, created_at)
-				values ($1, $2, $3, $4)
-				on conflict do nothing
-			`, repo, tag, digest, createdAt)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("insert tag %s:%s: %w", repo, tag, err)
+		q := pgstmt.Insert(func(b pgstmt.InsertStatement) {
+			b.Into("tags")
+			b.Columns("repository", "tag", "digest", "created_at")
+			for _, row := range rows {
+				b.Value(str(row["repository"]), str(row["tag"]), str(row["digest"]), parseTime(row["created_at"]))
 			}
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+			b.OnConflictDoNothing()
+		})
+		if _, err := q.ExecContext(ctx, db.ExecContext); err != nil {
+			return fmt.Errorf("insert tags: %w", err)
 		}
 		total += len(rows)
 		slog.Info("tags", "count", total)
@@ -233,27 +205,16 @@ func migrateBlobs(ctx context.Context, d1 *d1Client, db *sql.DB) error {
 		if len(rows) == 0 {
 			break
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			repo := str(row["repository"])
-			digest := str(row["digest"])
-			size := int64(num(row["size"]))
-			createdAt := parseTime(row["created_at"])
-			_, err := tx.ExecContext(ctx, `
-				insert into blobs (repository, digest, size, created_at)
-				values ($1, $2, $3, $4)
-				on conflict do nothing
-			`, repo, digest, size, createdAt)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("insert blob %s@%s: %w", repo, digest, err)
+		q := pgstmt.Insert(func(b pgstmt.InsertStatement) {
+			b.Into("blobs")
+			b.Columns("repository", "digest", "size", "created_at")
+			for _, row := range rows {
+				b.Value(str(row["repository"]), str(row["digest"]), int64(num(row["size"])), parseTime(row["created_at"]))
 			}
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+			b.OnConflictDoNothing()
+		})
+		if _, err := q.ExecContext(ctx, db.ExecContext); err != nil {
+			return fmt.Errorf("insert blobs: %w", err)
 		}
 		total += len(rows)
 		slog.Info("blobs", "count", total)
