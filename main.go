@@ -44,7 +44,7 @@ func main() {
 
 	bucket := storageClient.Bucket(config.MustString("bucket_name"))
 
-	app := &App{Bucket: bucket, DB: db}
+	app := &App{Bucket: bucket}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {

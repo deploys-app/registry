@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,7 +26,6 @@ const chunkMinLength = 5 * 1024 * 1024 // 5 MiB
 // App holds shared dependencies.
 type App struct {
 	Bucket *storage.BucketHandle
-	DB     *sql.DB
 }
 
 var (
@@ -247,7 +245,10 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 				defer resp.Body.Close()
 				size, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 				if err := a.writeBlob(ctx, name, mount, resp.Body); err == nil {
-					go a.insertBlob(name, mount, size)
+					if err := a.insertBlob(ctx, name, mount, size); err != nil {
+						registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+						return
+					}
 					w.Header().Set("Location", "/v2/"+name+"/blobs/"+mount)
 					w.Header().Set("Docker-Content-Digest", mount)
 					w.WriteHeader(http.StatusCreated)
@@ -259,7 +260,10 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 			if srcAttrs, err := src.Attrs(ctx); err == nil {
 				dst := a.Bucket.Object(fmt.Sprintf("%s/blobs/%s", name, mount))
 				if _, err := dst.CopierFrom(src).Run(ctx); err == nil {
-					go a.insertBlob(name, mount, srcAttrs.Size)
+					if err := a.insertBlob(ctx, name, mount, srcAttrs.Size); err != nil {
+						registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+						return
+					}
 					w.Header().Set("Location", "/v2/"+name+"/blobs/"+mount)
 					w.Header().Set("Docker-Content-Digest", mount)
 					w.WriteHeader(http.StatusCreated)
@@ -386,7 +390,10 @@ func (a *App) putUpload(w http.ResponseWriter, r *http.Request, name, reference 
 		return
 	}
 
-	go a.insertBlob(name, digest, state.Size)
+	if err := a.insertBlob(ctx, name, digest, state.Size); err != nil {
+		registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
 
 	w.Header().Set("Location", "/v2/"+name+"/blobs/"+digest)
 	w.Header().Set("Docker-Content-Digest", digest)
@@ -454,29 +461,35 @@ func (a *App) putManifest(w http.ResponseWriter, r *http.Request, name, referenc
 		return
 	}
 
-	go func() {
-		db := a.DB
-		db.ExecContext(context.Background(), `
-			insert into repositories (name, namespace)
-			values ($1, $2)
-			on conflict do nothing
-		`, name, namespace)
-		db.ExecContext(context.Background(), `
-			insert into manifests (repository, digest)
-			values ($1, $2)
-			on conflict do nothing
-		`, name, digest)
-		if digest != reference {
-			db.ExecContext(context.Background(), `
-				insert into tags (repository, tag, digest)
-				values ($1, $2, $3)
-				on conflict (repository, tag)
-				do update set
-					digest = excluded.digest,
-					created_at = now()
-			`, name, reference, digest)
+	if _, err := pgctx.Exec(ctx, `
+		insert into repositories (name, namespace)
+		values ($1, $2)
+		on conflict do nothing
+	`, name, namespace); err != nil {
+		registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	if _, err := pgctx.Exec(ctx, `
+		insert into manifests (repository, digest)
+		values ($1, $2)
+		on conflict do nothing
+	`, name, digest); err != nil {
+		registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	if digest != reference {
+		if _, err := pgctx.Exec(ctx, `
+			insert into tags (repository, tag, digest)
+			values ($1, $2, $3)
+			on conflict (repository, tag)
+			do update set
+				digest = excluded.digest,
+				created_at = now()
+		`, name, reference, digest); err != nil {
+			registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			return
 		}
-	}()
+	}
 
 	w.Header().Set("Location", "/v2/"+name+"/manifests/"+reference)
 	w.Header().Set("Docker-Content-Digest", digest)
@@ -537,13 +550,17 @@ func (a *App) deleteManifest(w http.ResponseWriter, r *http.Request, name, refer
 		return
 	}
 
-	go func() {
-		if strings.HasPrefix(reference, "sha256:") {
-			a.DB.ExecContext(context.Background(), `delete from manifests where repository = $1 and digest = $2`, name, reference)
-		} else {
-			a.DB.ExecContext(context.Background(), `delete from tags where repository = $1 and tag = $2`, name, reference)
+	if strings.HasPrefix(reference, "sha256:") {
+		if _, err := pgctx.Exec(ctx, `delete from manifests where repository = $1 and digest = $2`, name, reference); err != nil {
+			registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			return
 		}
-	}()
+	} else {
+		if _, err := pgctx.Exec(ctx, `delete from tags where repository = $1 and tag = $2`, name, reference); err != nil {
+			registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			return
+		}
+	}
 
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -561,7 +578,10 @@ func (a *App) deleteBlob(w http.ResponseWriter, r *http.Request, name, digest st
 		return
 	}
 
-	go a.DB.ExecContext(context.Background(), `delete from blobs where repository = $1 and digest = $2`, name, digest)
+	if _, err := pgctx.Exec(ctx, `delete from blobs where repository = $1 and digest = $2`, name, digest); err != nil {
+		registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
 
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -639,12 +659,13 @@ func (a *App) composeParts(ctx context.Context, reference string, partCount int,
 	return nil
 }
 
-func (a *App) insertBlob(name, digest string, size int64) {
-	a.DB.ExecContext(context.Background(), `
+func (a *App) insertBlob(ctx context.Context, name, digest string, size int64) error {
+	_, err := pgctx.Exec(ctx, `
 		insert into blobs (repository, digest, size)
 		values ($1, $2, $3)
 		on conflict do nothing
 	`, name, digest, size)
+	return err
 }
 
 // upload state threaded through URL query params
