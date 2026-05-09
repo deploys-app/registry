@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -672,10 +673,11 @@ func registryError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func isNotFound(err error) bool {
-	if err == storage.ErrObjectNotExist {
+	if errors.Is(err, storage.ErrObjectNotExist) {
 		return true
 	}
-	if e, ok := err.(*googleapi.Error); ok {
+	var e *googleapi.Error
+	if errors.As(err, &e) {
 		return e.Code == http.StatusNotFound
 	}
 	return false
