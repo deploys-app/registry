@@ -14,10 +14,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
+	"github.com/acoshift/pgsql/pgstmt"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
 )
@@ -513,6 +515,11 @@ func (a *App) putManifest(w http.ResponseWriter, r *http.Request, name, referenc
 		}
 	}
 
+	if err := a.indexManifestBlobs(ctx, name, digest, body); err != nil {
+		slog.Error("index manifest blobs", "name", name, "digest", digest, "error", err)
+		// non-fatal: index can be rebuilt later
+	}
+
 	w.Header().Set("Location", "/v2/"+name+"/manifests/"+reference)
 	w.Header().Set("Docker-Content-Digest", digest)
 	w.WriteHeader(http.StatusCreated)
@@ -681,6 +688,117 @@ func (a *App) composeParts(ctx context.Context, reference string, partCount int,
 		}
 	}()
 
+	return nil
+}
+
+type manifestContent struct {
+	Config struct {
+		Digest string `json:"digest"`
+	} `json:"config"`
+	Layers []struct {
+		Digest string `json:"digest"`
+	} `json:"layers"`
+}
+
+// indexManifestBlobs parses a manifest body and records which blobs it references.
+func (a *App) indexManifestBlobs(ctx context.Context, repository, manifestDigest string, body []byte) error {
+	var m manifestContent
+	if err := json.Unmarshal(body, &m); err != nil {
+		return err
+	}
+
+	seen := make(map[string]struct{})
+	if d := m.Config.Digest; d != "" {
+		seen[d] = struct{}{}
+	}
+	for _, layer := range m.Layers {
+		if d := layer.Digest; d != "" {
+			seen[d] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+
+	_, err := pgstmt.Insert(func(b pgstmt.InsertStatement) {
+		b.Into("manifest_blobs")
+		b.Columns("repository", "manifest_digest", "blob_digest")
+		for blobDigest := range seen {
+			b.Value(repository, manifestDigest, blobDigest)
+		}
+		b.OnConflictDoNothing()
+	}).ExecWith(ctx)
+	return err
+}
+
+// runIndexer runs rebuildManifestBlobsIndex immediately then every 24 hours.
+func (a *App) runIndexer(ctx context.Context) {
+	for {
+		if err := a.rebuildManifestBlobsIndex(ctx); err != nil {
+			slog.Error("rebuild manifest blobs index", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(24 * time.Hour):
+		}
+	}
+}
+
+// rebuildManifestBlobsIndex fetches every manifest that has no rows in
+// manifest_blobs yet, reads its content from GCS, and indexes the blob refs.
+func (a *App) rebuildManifestBlobsIndex(ctx context.Context) error {
+	type manifestID struct {
+		repository string
+		digest     string
+	}
+
+	var unindexed []manifestID
+	err := pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
+		var m manifestID
+		if err := scan(&m.repository, &m.digest); err != nil {
+			return err
+		}
+		unindexed = append(unindexed, m)
+		return nil
+	}, `
+		select m.repository, m.digest
+		from manifests m
+		where not exists (
+			select 1 from manifest_blobs mb
+			where mb.repository = m.repository
+			  and mb.manifest_digest = m.digest
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("query unindexed manifests: %w", err)
+	}
+	if len(unindexed) == 0 {
+		return nil
+	}
+
+	slog.Info("indexing manifests", "count", len(unindexed))
+	indexed := 0
+	for _, m := range unindexed {
+		obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", m.repository, m.digest))
+		rc, err := obj.NewReader(ctx)
+		if err != nil {
+			slog.Warn("read manifest for indexing", "repository", m.repository, "digest", m.digest, "error", err)
+			continue
+		}
+		body, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			slog.Warn("read manifest body", "repository", m.repository, "digest", m.digest, "error", err)
+			continue
+		}
+		if err := a.indexManifestBlobs(ctx, m.repository, m.digest, body); err != nil {
+			slog.Warn("index manifest blobs", "repository", m.repository, "digest", m.digest, "error", err)
+			continue
+		}
+		indexed++
+	}
+	slog.Info("indexing complete", "indexed", indexed, "total", len(unindexed))
 	return nil
 }
 

@@ -31,3 +31,12 @@ create table blobs (
 	created_at timestamptz not null default now(),
 	primary key (repository, digest)
 );
+
+create table manifest_blobs (
+	repository      text not null,
+	manifest_digest text not null,
+	blob_digest     text not null,
+	primary key (repository, manifest_digest, blob_digest),
+	foreign key (repository, manifest_digest) references manifests (repository, digest)
+);
+create index manifest_blobs_blob_idx on manifest_blobs (repository, blob_digest);

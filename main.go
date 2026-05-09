@@ -57,6 +57,8 @@ func main() {
 
 	app := &App{Bucket: bucket}
 
+	go app.runIndexer(pgctx.NewContext(ctx, db))
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Deploys.app Registry Service"))
