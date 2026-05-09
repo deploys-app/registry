@@ -705,8 +705,7 @@ func isNotFound(err error) bool {
 	if errors.Is(err, storage.ErrObjectNotExist) {
 		return true
 	}
-	var e *googleapi.Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*googleapi.Error](err); ok {
 		return e.Code == http.StatusNotFound
 	}
 	return false
