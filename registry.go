@@ -683,13 +683,21 @@ func uploadLocation(name, reference string, state uploadState) string {
 
 // registry error response helpers
 
+type registryErrorItem struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Detail  string `json:"detail"`
+}
+
+type registryErrorBody struct {
+	Errors []registryErrorItem `json:"errors"`
+}
+
 func registryError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]any{
-		"errors": []map[string]any{
-			{"code": code, "message": message, "detail": message},
-		},
+	json.NewEncoder(w).Encode(registryErrorBody{
+		Errors: []registryErrorItem{{Code: code, Message: message, Detail: message}},
 	})
 }
 
