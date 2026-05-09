@@ -17,6 +17,8 @@ All configuration is via environment variables.
 | `DB_URL` | yes | — | PostgreSQL connection string |
 | `BUCKET_NAME` | yes | — | GCS bucket name |
 | `PORT` | no | `8080` | HTTP listen port |
+| `LOG_LEVEL` | no | `INFO` | Log level (`DEBUG`, `INFO`, `WARN`, `ERROR`) |
+| `INTERNAL_SECRET` | no | — | Bearer token for `/internal/*` endpoints |
 
 The service authenticates with Google Cloud using [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
 
@@ -97,6 +99,51 @@ List manifests for a repository with their digest and creation time.
 ```
 
 Requires `registry.get` permission.
+
+## Internal API
+
+### `POST /internal/indexManifests`
+
+Reads every manifest that has no `manifest_blobs` rows yet, fetches its content from GCS, and records which blobs it references. Intended to be called by Cloud Scheduler rather than run as a background goroutine, so only one replica processes the job at a time.
+
+Protected by `Authorization: Bearer <INTERNAL_SECRET>`. If `INTERNAL_SECRET` is not set the check is skipped (local dev only).
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `INTERNAL_SECRET` | no | — | Bearer token required on the `Authorization` header |
+
+Returns `204 No Content` on success.
+
+#### Cloud Scheduler setup
+
+Create a scheduler job that calls the endpoint daily. Replace the placeholders with your actual values.
+
+```sh
+gcloud scheduler jobs create http registry-index-manifests \
+  --location=asia-southeast1 \
+  --schedule="0 2 * * *" \
+  --uri="https://registry.deploys.app/internal/indexManifests" \
+  --http-method=POST \
+  --headers="Authorization=Bearer <INTERNAL_SECRET>" \
+  --attempt-deadline=30m \
+  --time-zone="UTC"
+```
+
+To update the schedule or secret on an existing job:
+
+```sh
+gcloud scheduler jobs update http registry-index-manifests \
+  --location=asia-southeast1 \
+  --schedule="0 2 * * *" \
+  --headers="Authorization=Bearer <INTERNAL_SECRET>"
+```
+
+To trigger the job immediately (e.g. after initial deploy):
+
+```sh
+gcloud scheduler jobs run registry-index-manifests \
+  --location=asia-southeast1
+```
 
 ## Migration
 
