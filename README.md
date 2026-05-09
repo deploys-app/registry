@@ -98,15 +98,17 @@ List manifests for a repository with their digest and creation time.
 
 Requires `registry.get` permission.
 
-## Migration from Cloudflare D1
+## Migration
 
-A one-time migration script is provided to import existing data from Cloudflare D1 into PostgreSQL.
+### Cloudflare D1 → PostgreSQL (`migrate/d1topg`)
+
+Imports existing metadata from Cloudflare D1 into PostgreSQL.
 
 ```sh
 CLOUDFLARE_API_TOKEN=... \
 CLOUDFLARE_ACCOUNT_ID=... \
 DB_URL=postgres://... \
-go run ./migrate/
+go run ./migrate/d1topg/
 ```
 
 | Variable | Required | Default | Description |
@@ -116,4 +118,27 @@ go run ./migrate/
 | `DB_URL` | yes | — | PostgreSQL connection string |
 | `D1_DATABASE_ID` | no | `67b907e7-9d0d-4846-851e-8e7da80acbad` | D1 database ID |
 
-The script migrates all four tables (`repositories`, `manifests`, `tags`, `blobs`) in dependency order, in batches of 1000 rows. It is safe to re-run — rows that already exist are skipped.
+Migrates all four tables (`repositories`, `manifests`, `tags`, `blobs`) in dependency order, in batches of 1000 rows. Safe to re-run — rows that already exist are skipped.
+
+### Cloudflare R2 → GCS (`migrate/r2togcs`)
+
+Copies all objects from Cloudflare R2 to Google Cloud Storage, preserving content-type and `docker-content-digest` metadata. For tag-addressed manifests the SHA256 digest is computed on the fly. Temporary upload objects (`_uploads/`) are skipped.
+
+```sh
+R2_ACCOUNT_ID=... \
+R2_ACCESS_KEY_ID=... \
+R2_SECRET_ACCESS_KEY=... \
+BUCKET_NAME=my-gcs-bucket \
+go run ./migrate/r2togcs/
+```
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `R2_ACCOUNT_ID` | yes | — | Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | yes | — | R2 access key ID |
+| `R2_SECRET_ACCESS_KEY` | yes | — | R2 secret access key |
+| `BUCKET_NAME` | yes | — | GCS destination bucket name |
+| `R2_BUCKET` | no | `deploys-registry` | R2 source bucket name |
+| `WORKERS` | no | `8` | Number of parallel copy workers |
+
+Safe to re-run — objects already present in GCS are skipped.
