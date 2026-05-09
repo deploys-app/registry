@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -38,6 +39,7 @@ var (
 
 func (a *App) registryHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	slog.Debug("registry request", "method", r.Method, "path", path)
 
 	if path == "/v2/" {
 		w.Write([]byte("ok"))
@@ -116,6 +118,7 @@ func (a *App) registryHandler(w http.ResponseWriter, r *http.Request) {
 
 // end-2 GET
 func (a *App) getBlob(w http.ResponseWriter, r *http.Request, name, digest string) {
+	slog.Debug("get blob", "name", name, "digest", digest)
 	ctx := r.Context()
 	obj := a.Bucket.Object(fmt.Sprintf("%s/blobs/%s", name, digest))
 	attrs, err := obj.Attrs(ctx)
@@ -143,6 +146,7 @@ func (a *App) getBlob(w http.ResponseWriter, r *http.Request, name, digest strin
 
 // end-2 HEAD
 func (a *App) headBlob(w http.ResponseWriter, r *http.Request, name, digest string) {
+	slog.Debug("head blob", "name", name, "digest", digest)
 	ctx := r.Context()
 	attrs, err := a.Bucket.Object(fmt.Sprintf("%s/blobs/%s", name, digest)).Attrs(ctx)
 	if isNotFound(err) {
@@ -161,6 +165,7 @@ func (a *App) headBlob(w http.ResponseWriter, r *http.Request, name, digest stri
 
 // end-3 GET
 func (a *App) getManifest(w http.ResponseWriter, r *http.Request, name, reference string) {
+	slog.Debug("get manifest", "name", name, "reference", reference)
 	ctx := r.Context()
 	obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", name, reference))
 	attrs, err := obj.Attrs(ctx)
@@ -199,6 +204,7 @@ func (a *App) getManifest(w http.ResponseWriter, r *http.Request, name, referenc
 
 // end-3 HEAD
 func (a *App) headManifest(w http.ResponseWriter, r *http.Request, name, reference string) {
+	slog.Debug("head manifest", "name", name, "reference", reference)
 	ctx := r.Context()
 	attrs, err := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", name, reference)).Attrs(ctx)
 	if isNotFound(err) {
@@ -223,6 +229,7 @@ func (a *App) headManifest(w http.ResponseWriter, r *http.Request, name, referen
 
 // end-4a, end-4b, end-11
 func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
+	slog.Debug("start upload", "name", name)
 	ctx := r.Context()
 	q := r.URL.Query()
 	mount := q.Get("mount")
@@ -298,6 +305,7 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 
 // end-5: upload chunk
 func (a *App) patchUpload(w http.ResponseWriter, r *http.Request, name, reference string) {
+	slog.Debug("patch upload", "name", name, "reference", reference)
 	q := r.URL.Query()
 	stateStr := q.Get("state")
 	if stateStr == "" {
@@ -351,6 +359,7 @@ func (a *App) patchUpload(w http.ResponseWriter, r *http.Request, name, referenc
 
 // end-6: finalize upload
 func (a *App) putUpload(w http.ResponseWriter, r *http.Request, name, reference string) {
+	slog.Debug("put upload", "name", name, "reference", reference)
 	q := r.URL.Query()
 	stateStr := q.Get("state")
 	digest := q.Get("digest")
@@ -402,6 +411,7 @@ func (a *App) putUpload(w http.ResponseWriter, r *http.Request, name, reference 
 
 // end-13: get upload status
 func (a *App) getUpload(w http.ResponseWriter, r *http.Request, name, reference string) {
+	slog.Debug("get upload", "name", name, "reference", reference)
 	q := r.URL.Query()
 	stateStr := q.Get("state")
 	if stateStr == "" {
@@ -422,6 +432,7 @@ func (a *App) getUpload(w http.ResponseWriter, r *http.Request, name, reference 
 
 // end-7
 func (a *App) putManifest(w http.ResponseWriter, r *http.Request, name, reference string) {
+	slog.Debug("put manifest", "name", name, "reference", reference)
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		registryError(w, http.StatusBadRequest, "UNSUPPORTED", "the operation is unsupported")
@@ -438,6 +449,7 @@ func (a *App) putManifest(w http.ResponseWriter, r *http.Request, name, referenc
 		return
 	}
 	digest := fmt.Sprintf("sha256:%x", h.Sum(nil))
+	slog.Debug("manifest digest computed", "name", name, "reference", reference, "digest", digest)
 
 	writeManifestObj := func(objPath string) error {
 		wc := a.Bucket.Object(objPath).NewWriter(ctx)
@@ -498,6 +510,7 @@ func (a *App) putManifest(w http.ResponseWriter, r *http.Request, name, referenc
 
 // end-8
 func (a *App) listTags(w http.ResponseWriter, r *http.Request, name string) {
+	slog.Debug("list tags", "name", name)
 	ctx := r.Context()
 	q := r.URL.Query()
 	limit := 50
@@ -539,6 +552,7 @@ func (a *App) listTags(w http.ResponseWriter, r *http.Request, name string) {
 
 // end-9
 func (a *App) deleteManifest(w http.ResponseWriter, r *http.Request, name, reference string) {
+	slog.Debug("delete manifest", "name", name, "reference", reference)
 	ctx := r.Context()
 	obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", name, reference))
 	if _, err := obj.Attrs(ctx); isNotFound(err) {
@@ -567,6 +581,7 @@ func (a *App) deleteManifest(w http.ResponseWriter, r *http.Request, name, refer
 
 // end-10
 func (a *App) deleteBlob(w http.ResponseWriter, r *http.Request, name, digest string) {
+	slog.Debug("delete blob", "name", name, "digest", digest)
 	ctx := r.Context()
 	obj := a.Bucket.Object(fmt.Sprintf("%s/blobs/%s", name, digest))
 	if _, err := obj.Attrs(ctx); isNotFound(err) {
@@ -694,6 +709,11 @@ type registryErrorBody struct {
 }
 
 func registryError(w http.ResponseWriter, status int, code, message string) {
+	if status >= 500 {
+		slog.Error("registry error", "status", status, "code", code, "message", message)
+	} else {
+		slog.Debug("registry error", "status", status, "code", code, "message", message)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(registryErrorBody{
