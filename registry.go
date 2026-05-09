@@ -305,7 +305,9 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 
 // end-5: upload chunk
 func (a *App) patchUpload(w http.ResponseWriter, r *http.Request, name, reference string) {
-	slog.Debug("patch upload", "name", name, "reference", reference)
+	slog.Debug("patch upload", "name", name, "reference", reference,
+		"content-length", r.Header.Get("Content-Length"),
+		"content-range", r.Header.Get("Content-Range"))
 	q := r.URL.Query()
 	stateStr := q.Get("state")
 	if stateStr == "" {
@@ -319,12 +321,6 @@ func (a *App) patchUpload(w http.ResponseWriter, r *http.Request, name, referenc
 		return
 	}
 
-	contentLength, _ := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
-	if contentLength == 0 {
-		registryError(w, http.StatusBadRequest, "UNSUPPORTED", "empty body")
-		return
-	}
-
 	rangeStart := state.Size
 	if cr := r.Header.Get("Content-Range"); cr != "" {
 		if parts := strings.SplitN(cr, "-", 2); len(parts) == 2 {
@@ -332,13 +328,15 @@ func (a *App) patchUpload(w http.ResponseWriter, r *http.Request, name, referenc
 		}
 	}
 	if state.Size != rangeStart {
+		slog.Debug("patch upload range mismatch", "state.size", state.Size, "range-start", rangeStart)
 		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
 
 	ctx := r.Context()
 	partNum := state.Parts + 1
-	wc := a.Bucket.Object(fmt.Sprintf("_uploads/%s/%d", reference, partNum)).NewWriter(ctx)
+	partObj := a.Bucket.Object(fmt.Sprintf("_uploads/%s/%d", reference, partNum))
+	wc := partObj.NewWriter(ctx)
 	n, err := io.Copy(wc, r.Body)
 	if err != nil {
 		wc.Close()
@@ -350,8 +348,15 @@ func (a *App) patchUpload(w http.ResponseWriter, r *http.Request, name, referenc
 		return
 	}
 
-	state.Size += n
-	state.Parts = partNum
+	if n > 0 {
+		state.Size += n
+		state.Parts = partNum
+		slog.Debug("patch upload chunk written", "name", name, "part", partNum, "bytes", n, "total", state.Size)
+	} else {
+		// empty chunk — discard the empty object
+		partObj.Delete(ctx)
+		slog.Debug("patch upload empty chunk ignored", "name", name, "reference", reference)
+	}
 
 	w.Header().Set("Location", uploadLocation(name, reference, state))
 	w.WriteHeader(http.StatusAccepted)
