@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/acoshift/pgsql"
@@ -729,20 +728,6 @@ func (a *App) indexManifestBlobs(ctx context.Context, repository, manifestDigest
 		b.OnConflictDoNothing()
 	}).ExecWith(ctx)
 	return err
-}
-
-// runIndexer runs rebuildManifestBlobsIndex immediately then every 24 hours.
-func (a *App) runIndexer(ctx context.Context) {
-	for {
-		if err := a.rebuildManifestBlobsIndex(ctx); err != nil {
-			slog.Error("rebuild manifest blobs index", "error", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(24 * time.Hour):
-		}
-	}
 }
 
 // rebuildManifestBlobsIndex fetches every manifest that has no rows in

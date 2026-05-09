@@ -57,7 +57,7 @@ func main() {
 
 	app := &App{Bucket: bucket}
 
-	go app.runIndexer(pgctx.NewContext(ctx, db))
+	internalSecret := config.String("internal_secret")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +65,18 @@ func main() {
 	})
 	mux.Handle("/v2/", authMiddleware(http.HandlerFunc(app.registryHandler)))
 	app.mountAPI(mux)
+	mux.HandleFunc("POST /internal/indexManifests", func(w http.ResponseWriter, r *http.Request) {
+		if internalSecret != "" && r.Header.Get("Authorization") != "Bearer "+internalSecret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if err := app.rebuildManifestBlobsIndex(r.Context()); err != nil {
+			slog.Error("rebuildManifestBlobsIndex", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 
 	port := config.StringDefault("PORT", "8080")
 	slog.Info("start registry", "addr", ":"+port)
