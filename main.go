@@ -20,8 +20,19 @@ import (
 
 var config = configfile.NewEnvReader()
 
+var logLevel slog.LevelVar
+
 func main() {
 	ctx := context.Background()
+
+	if l := config.String("log_level"); l != "" {
+		if err := logLevel.UnmarshalText([]byte(l)); err != nil {
+			slog.Error("invalid log_level", "value", l)
+		}
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: &logLevel,
+	})))
 
 	go cachestore.RunGCInterval(ctx, time.Hour)
 
