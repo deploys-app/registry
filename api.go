@@ -96,7 +96,7 @@ func (r *apiGetRequest) Valid() error {
 
 type apiGetResult struct {
 	Name      string    `json:"name"`
-	Size      *int64    `json:"size"`
+	Size      int64     `json:"size"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -118,9 +118,9 @@ func (a *App) apiGet(ctx context.Context, req *apiGetRequest) (*apiGetResult, er
 		return nil, arpc.NewError("repository not found")
 	}
 
-	var size *int64
+	var size int64
 	pgctx.QueryRow(ctx, `
-		select sum(size) from blobs where repository = $1
+		select coalesce(sum(size), 0) from blobs where repository = $1
 	`, fullName).Scan(&size)
 
 	return &apiGetResult{
