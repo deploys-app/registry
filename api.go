@@ -6,9 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/acoshift/arpc/v2"
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
+	"google.golang.org/api/iterator"
 )
 
 func (a *App) mountAPI(mux *http.ServeMux) {
@@ -18,6 +20,7 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	api.Handle("POST /api/get", m.Handler(a.apiGet))
 	api.Handle("POST /api/getTags", m.Handler(a.apiGetTags))
 	api.Handle("POST /api/getManifests", m.Handler(a.apiGetManifests))
+	api.Handle("POST /api/delete", m.Handler(a.apiDelete))
 	mux.Handle("/api/", apiAuthMiddleware(api))
 }
 
@@ -267,4 +270,77 @@ func (a *App) apiGetManifests(ctx context.Context, req *apiGetManifestsRequest) 
 		Name:  strings.TrimPrefix(repoName, req.Project+"/"),
 		Items: items,
 	}, nil
+}
+
+// delete
+
+type apiDeleteRequest struct {
+	Project    string `json:"project"`
+	Repository string `json:"repository"`
+}
+
+func (r *apiDeleteRequest) Valid() error {
+	if r.Project == "" {
+		return arpc.NewError("project required")
+	}
+	if r.Repository == "" {
+		return arpc.NewError("repository required")
+	}
+	return nil
+}
+
+func (a *App) apiDelete(ctx context.Context, req *apiDeleteRequest) error {
+	if !checkPermission(ctx, req.Project, permPush) {
+		return arpc.NewError("iam: forbidden")
+	}
+
+	fullName := req.Project + "/" + req.Repository
+
+	var exists bool
+	if err := pgctx.QueryRow(ctx, `
+		select exists (select 1 from repositories where name = $1 and namespace = $2)
+	`, fullName, req.Project).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return arpc.NewError("repository not found")
+	}
+
+	// Detach from the request context so the deletion runs to completion
+	// even if the client disconnects or the request times out. The detached
+	// context still carries pgctx DB and other values from the parent.
+	dctx := context.WithoutCancel(ctx)
+
+	// Delete all GCS objects under this repository prefix
+	it := a.Bucket.Objects(dctx, &storage.Query{
+		Prefix:     fullName + "/",
+		Projection: storage.ProjectionNoACL,
+	})
+	for {
+		attrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if err := a.Bucket.Object(attrs.Name).Delete(dctx); err != nil && !isNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete DB records in FK dependency order
+	for _, query := range []string{
+		`delete from manifest_blobs where repository = $1`,
+		`delete from tags        where repository = $1`,
+		`delete from manifests   where repository = $1`,
+		`delete from blobs       where repository = $1`,
+		`delete from repositories where name = $1`,
+	} {
+		if _, err := pgctx.Exec(dctx, query, fullName); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

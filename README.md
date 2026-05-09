@@ -100,6 +100,16 @@ List manifests for a repository with their digest and creation time.
 
 Requires `registry.get` permission.
 
+#### `POST /api/delete`
+
+Delete a repository and all its data — manifests, tags, blobs, and the corresponding GCS objects. The operation continues to completion even if the client disconnects or the request times out.
+
+```json
+{ "project": "my-project", "repository": "my-image" }
+```
+
+Requires `registry.push` permission.
+
 ## Internal API
 
 ### `POST /internal/indexManifests`
