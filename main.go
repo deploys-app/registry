@@ -57,6 +57,8 @@ func main() {
 
 	app := &App{Bucket: bucket}
 
+	go app.runBlobGCInterval(ctx, 24*time.Hour)
+
 	internalSecret := config.String("internal_secret")
 
 	mux := http.NewServeMux()
@@ -65,13 +67,30 @@ func main() {
 	})
 	mux.Handle("/v2/", authMiddleware(http.HandlerFunc(app.registryHandler)))
 	app.mountAPI(mux)
-	mux.HandleFunc("POST /internal/indexManifests", func(w http.ResponseWriter, r *http.Request) {
+	internalAuth := func(w http.ResponseWriter, r *http.Request) bool {
 		if internalSecret != "" && r.Header.Get("Authorization") != "Bearer "+internalSecret {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return false
+		}
+		return true
+	}
+	mux.HandleFunc("POST /internal/indexManifests", func(w http.ResponseWriter, r *http.Request) {
+		if !internalAuth(w, r) {
 			return
 		}
 		if err := app.rebuildManifestBlobsIndex(r.Context()); err != nil {
 			slog.Error("rebuildManifestBlobsIndex", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /internal/runBlobGC", func(w http.ResponseWriter, r *http.Request) {
+		if !internalAuth(w, r) {
+			return
+		}
+		if err := app.runBlobGC(r.Context()); err != nil {
+			slog.Error("runBlobGC", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

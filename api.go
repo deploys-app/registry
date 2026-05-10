@@ -11,6 +11,7 @@ import (
 	"github.com/acoshift/arpc/v2"
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/iterator"
 )
 
@@ -22,6 +23,7 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	api.Handle("POST /api/getTags", m.Handler(a.apiGetTags))
 	api.Handle("POST /api/getManifests", m.Handler(a.apiGetManifests))
 	api.Handle("POST /api/delete", m.Handler(a.apiDelete))
+	api.Handle("POST /api/deleteManifest", m.Handler(a.apiDeleteManifest))
 	api.Handle("POST /api/untag", m.Handler(a.apiUntag))
 	mux.Handle("/api/", apiAuthMiddleware(api))
 }
@@ -340,6 +342,95 @@ func (a *App) apiDelete(ctx context.Context, req *apiDeleteRequest) error {
 		`delete from repositories where name = $1`,
 	} {
 		if _, err := pgctx.Exec(dctx, query, fullName); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// deleteManifest
+
+type apiDeleteManifestRequest struct {
+	Project    string `json:"project"`
+	Repository string `json:"repository"`
+	Digest     string `json:"digest"`
+}
+
+func (r *apiDeleteManifestRequest) Valid() error {
+	if r.Project == "" {
+		return arpc.NewError("project required")
+	}
+	if r.Repository == "" {
+		return arpc.NewError("repository required")
+	}
+	if r.Digest == "" {
+		return arpc.NewError("digest required")
+	}
+	return nil
+}
+
+func (a *App) apiDeleteManifest(ctx context.Context, req *apiDeleteManifestRequest) error {
+	if !checkPermission(ctx, req.Project, permPush) {
+		return arpc.NewError("iam: forbidden")
+	}
+
+	fullName := req.Project + "/" + req.Repository
+
+	var exists bool
+	if err := pgctx.QueryRow(ctx, `
+		select exists (select 1 from manifests where repository = $1 and digest = $2)
+	`, fullName, req.Digest).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return arpc.NewError("manifest not found")
+	}
+
+	// Collect tags pointing to this manifest.
+	var tags []string
+	err := pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
+		var tag string
+		if err := scan(&tag); err != nil {
+			return err
+		}
+		tags = append(tags, tag)
+		return nil
+	}, `select tag from tags where repository = $1 and digest = $2`, fullName, req.Digest)
+	if err != nil {
+		return err
+	}
+
+	// Delete GCS objects (digest-addressed manifest + all tag-addressed manifests) in parallel.
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", fullName, req.Digest))
+		if err := obj.Delete(gctx); err != nil && !isNotFound(err) {
+			return err
+		}
+		return nil
+	})
+	for _, tag := range tags {
+		tag := tag
+		g.Go(func() error {
+			obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", fullName, tag))
+			if err := obj.Delete(gctx); err != nil && !isNotFound(err) {
+				return err
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// Delete DB records in FK dependency order.
+	for _, q := range []string{
+		`delete from manifest_blobs where repository = $1 and manifest_digest = $2`,
+		`delete from tags            where repository = $1 and digest         = $2`,
+		`delete from manifests       where repository = $1 and digest         = $2`,
+	} {
+		if _, err := pgctx.Exec(ctx, q, fullName, req.Digest); err != nil {
 			return err
 		}
 	}
