@@ -387,6 +387,10 @@ func (a *App) apiDeleteManifest(ctx context.Context, req *apiDeleteManifestReque
 		return arpc.NewError("manifest not found")
 	}
 
+	// Detach from the request context so the deletion runs to completion
+	// even if the client disconnects or the request times out.
+	ctx = context.WithoutCancel(ctx)
+
 	// Collect tags pointing to this manifest.
 	var tags []string
 	err := pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
