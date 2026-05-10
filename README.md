@@ -100,6 +100,16 @@ List manifests for a repository with their digest and creation time.
 
 Requires `registry.get` permission.
 
+#### `POST /api/deleteManifest`
+
+Delete a single manifest by digest, including all tags that point to it and their GCS objects. Blobs referenced by the manifest are **not** deleted immediately — they are cleaned up by the blob GC.
+
+```json
+{ "project": "my-project", "repository": "my-image", "digest": "sha256:abc123..." }
+```
+
+Requires `registry.push` permission.
+
 #### `POST /api/delete`
 
 Delete a repository and all its data — manifests, tags, blobs, and the corresponding GCS objects. The operation continues to completion even if the client disconnects or the request times out.
@@ -152,6 +162,32 @@ To trigger the job immediately (e.g. after initial deploy):
 
 ```sh
 gcloud scheduler jobs run registry-index-manifests \
+  --location=asia-southeast1
+```
+
+### `POST /internal/runBlobGC`
+
+Deletes blobs that are not referenced by any manifest and are older than 1 day. The 1-day grace period covers blobs that have been uploaded but whose manifest push is still in flight.
+
+Returns `204 No Content` on success. Protected by the same `INTERNAL_SECRET` bearer token as `indexManifests`.
+
+#### Cloud Scheduler setup
+
+```sh
+gcloud scheduler jobs create http registry-blob-gc \
+  --location=asia-southeast1 \
+  --schedule="0 3 * * *" \
+  --uri="https://registry.deploys.app/internal/runBlobGC" \
+  --http-method=POST \
+  --headers="Authorization=Bearer <INTERNAL_SECRET>" \
+  --attempt-deadline=30m \
+  --time-zone="UTC"
+```
+
+To trigger manually:
+
+```sh
+gcloud scheduler jobs run registry-blob-gc \
   --location=asia-southeast1
 ```
 
