@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	api.Handle("POST /api/getTags", m.Handler(a.apiGetTags))
 	api.Handle("POST /api/getManifests", m.Handler(a.apiGetManifests))
 	api.Handle("POST /api/delete", m.Handler(a.apiDelete))
+	api.Handle("POST /api/untag", m.Handler(a.apiUntag))
 	mux.Handle("/api/", apiAuthMiddleware(api))
 }
 
@@ -340,6 +342,59 @@ func (a *App) apiDelete(ctx context.Context, req *apiDeleteRequest) error {
 		if _, err := pgctx.Exec(dctx, query, fullName); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// untag
+
+type apiUntagRequest struct {
+	Project    string `json:"project"`
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+}
+
+func (r *apiUntagRequest) Valid() error {
+	if r.Project == "" {
+		return arpc.NewError("project required")
+	}
+	if r.Repository == "" {
+		return arpc.NewError("repository required")
+	}
+	if r.Tag == "" {
+		return arpc.NewError("tag required")
+	}
+	return nil
+}
+
+func (a *App) apiUntag(ctx context.Context, req *apiUntagRequest) error {
+	if !checkPermission(ctx, req.Project, permPush) {
+		return arpc.NewError("iam: forbidden")
+	}
+
+	fullName := req.Project + "/" + req.Repository
+
+	var exists bool
+	if err := pgctx.QueryRow(ctx, `
+		select exists (select 1 from tags where repository = $1 and tag = $2)
+	`, fullName, req.Tag).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return arpc.NewError("tag not found")
+	}
+
+	// Delete the tag-named GCS object (best-effort; ignore if already gone)
+	obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", fullName, req.Tag))
+	if err := obj.Delete(ctx); err != nil && !isNotFound(err) {
+		return err
+	}
+
+	if _, err := pgctx.Exec(ctx, `
+		delete from tags where repository = $1 and tag = $2
+	`, fullName, req.Tag); err != nil {
+		return err
 	}
 
 	return nil
