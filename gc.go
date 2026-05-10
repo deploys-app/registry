@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
@@ -66,19 +65,4 @@ func (a *App) runBlobGC(ctx context.Context) error {
 	}
 	slog.Info("blob gc: complete", "deleted", deleted, "total", len(unreferenced))
 	return nil
-}
-
-func (a *App) runBlobGCInterval(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := a.runBlobGC(ctx); err != nil {
-				slog.Error("blob gc", "error", err)
-			}
-		}
-	}
 }

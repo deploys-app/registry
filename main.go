@@ -57,8 +57,6 @@ func main() {
 
 	app := &App{Bucket: bucket}
 
-	go app.runBlobGCInterval(ctx, 24*time.Hour)
-
 	internalSecret := config.String("internal_secret")
 
 	mux := http.NewServeMux()
