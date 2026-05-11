@@ -75,45 +75,7 @@ All management endpoints accept `POST` with `Content-Type: application/json` and
 
 List repositories in a project namespace.
 
-```json
-{ "project": "my-project" }
-```
-
-Requires `registry.list` permission.
-
-#### `POST /api/get`
-
-Get repository info and total blob storage size.
-
-```json
-{ "project": "my-project", "repository": "my-image" }
-```
-
-Requires `registry.get` permission.
-
-#### `POST /api/getTags`
-
-List tags for a repository with their digest and creation time.
-
-```json
-{ "project": "my-project", "repository": "my-image" }
-```
-
-Requires `registry.get` permission.
-
-#### `POST /api/getManifests`
-
-List manifests for a repository with their digest and creation time.
-
-```json
-{ "project": "my-project", "repository": "my-image" }
-```
-
-Requires `registry.get` permission.
-
-#### `POST /api/getProjectStorage`
-
-Get the pre-calculated total blob storage used across all repositories in a project. The value is updated once per day by the `calculateProjectStorage` scheduler job. Returns `size: 0` with no `updatedAt` if the job has not run yet.
+Request:
 
 ```json
 { "project": "my-project" }
@@ -122,7 +84,115 @@ Get the pre-calculated total blob storage used across all repositories in a proj
 Response:
 
 ```json
-{ "size": 1073741824, "updatedAt": "2024-01-15T03:00:00Z" }
+{
+  "ok": true,
+  "result": {
+    "items": [
+      { "name": "my-image", "createdAt": "2024-01-15T00:00:00Z" }
+    ]
+  }
+}
+```
+
+Requires `registry.list` permission.
+
+#### `POST /api/get`
+
+Get repository info and total blob storage size.
+
+Request:
+
+```json
+{ "project": "my-project", "repository": "my-image" }
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "name": "my-image",
+    "size": 1073741824,
+    "createdAt": "2024-01-15T00:00:00Z"
+  }
+}
+```
+
+Requires `registry.get` permission.
+
+#### `POST /api/getTags`
+
+List tags for a repository with their digest and creation time.
+
+Request:
+
+```json
+{ "project": "my-project", "repository": "my-image" }
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "name": "my-image",
+    "items": [
+      { "tag": "latest", "digest": "sha256:abc123...", "createdAt": "2024-01-15T00:00:00Z" }
+    ]
+  }
+}
+```
+
+Requires `registry.get` permission.
+
+#### `POST /api/getManifests`
+
+List manifests for a repository with their digest and creation time.
+
+Request:
+
+```json
+{ "project": "my-project", "repository": "my-image" }
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "name": "my-image",
+    "items": [
+      { "digest": "sha256:abc123...", "createdAt": "2024-01-15T00:00:00Z" }
+    ]
+  }
+}
+```
+
+Requires `registry.get` permission.
+
+#### `POST /api/getProjectStorage`
+
+Get the pre-calculated total blob storage used across all repositories in a project. The value is updated once per day by the `calculateProjectStorage` scheduler job. Returns `size: 0` with no `updatedAt` if the job has not run yet.
+
+Request:
+
+```json
+{ "project": "my-project" }
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "size": 1073741824,
+    "updatedAt": "2024-01-15T03:00:00Z"
+  }
+}
 ```
 
 Requires `registry.get` permission.
@@ -131,8 +201,16 @@ Requires `registry.get` permission.
 
 Delete a single manifest by digest, including all tags that point to it and their GCS objects. Blobs referenced by the manifest are **not** deleted immediately — they are cleaned up by the blob GC.
 
+Request:
+
 ```json
 { "project": "my-project", "repository": "my-image", "digest": "sha256:abc123..." }
+```
+
+Response:
+
+```json
+{ "ok": true }
 ```
 
 Requires `registry.push` permission.
@@ -141,8 +219,34 @@ Requires `registry.push` permission.
 
 Delete a repository and all its data — manifests, tags, blobs, and the corresponding GCS objects. The operation continues to completion even if the client disconnects or the request times out.
 
+Request:
+
 ```json
 { "project": "my-project", "repository": "my-image" }
+```
+
+Response:
+
+```json
+{ "ok": true }
+```
+
+Requires `registry.push` permission.
+
+#### `POST /api/untag`
+
+Remove a single tag from a repository.
+
+Request:
+
+```json
+{ "project": "my-project", "repository": "my-image", "tag": "latest" }
+```
+
+Response:
+
+```json
+{ "ok": true }
 ```
 
 Requires `registry.push` permission.
