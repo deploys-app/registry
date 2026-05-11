@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
 	"github.com/acoshift/pgsql/pgstmt"
 )
-
-const storageChunkSize = 1000
 
 // calculateProjectStorage sums blob sizes per project namespace and upserts
 // the result into project_storage_usage. Intended to run once per day via
@@ -46,8 +45,7 @@ func (a *App) calculateProjectStorage(ctx context.Context) error {
 		return nil
 	}
 
-	for i := 0; i < len(usages); i += storageChunkSize {
-		chunk := usages[i:min(i+storageChunkSize, len(usages))]
+	for chunk := range slices.Chunk(usages, 1000) {
 		_, err := pgstmt.Insert(func(b pgstmt.InsertStatement) {
 			b.Into("project_storage_usage")
 			b.Columns("namespace", "size", "updated_at")
