@@ -581,9 +581,31 @@ func (a *App) deleteManifest(w http.ResponseWriter, r *http.Request, name, refer
 	}
 
 	if strings.HasPrefix(reference, "sha256:") {
-		if _, err := pgctx.Exec(ctx, `delete from manifests where repository = $1 and digest = $2`, name, reference); err != nil {
-			registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
-			return
+		// Collect tags pointing to this manifest so we can delete their GCS objects.
+		var tags []string
+		_ = pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
+			var tag string
+			if err := scan(&tag); err != nil {
+				return err
+			}
+			tags = append(tags, tag)
+			return nil
+		}, `select tag from tags where repository = $1 and digest = $2`, name, reference)
+		for _, tag := range tags {
+			// best-effort; ignore errors
+			a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", name, tag)).Delete(ctx)
+		}
+
+		// Delete dependent rows before manifests (FK constraints have no CASCADE).
+		for _, q := range []string{
+			`delete from manifest_blobs where repository = $1 and manifest_digest = $2`,
+			`delete from tags            where repository = $1 and digest         = $2`,
+			`delete from manifests       where repository = $1 and digest         = $2`,
+		} {
+			if _, err := pgctx.Exec(ctx, q, name, reference); err != nil {
+				registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+				return
+			}
 		}
 	} else {
 		if _, err := pgctx.Exec(ctx, `delete from tags where repository = $1 and tag = $2`, name, reference); err != nil {
