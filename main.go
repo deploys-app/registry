@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"log/slog"
 	"net/http"
@@ -66,7 +67,10 @@ func main() {
 	mux.Handle("/v2/", authMiddleware(http.HandlerFunc(app.registryHandler)))
 	app.mountAPI(mux)
 	internalAuth := func(w http.ResponseWriter, r *http.Request) bool {
-		if internalSecret != "" && r.Header.Get("Authorization") != "Bearer "+internalSecret {
+		if internalSecret != "" && subtle.ConstantTimeCompare(
+			[]byte(r.Header.Get("Authorization")),
+			[]byte("Bearer "+internalSecret),
+		) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return false
 		}
