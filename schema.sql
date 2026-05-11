@@ -40,3 +40,9 @@ create table manifest_blobs (
 	foreign key (repository, manifest_digest) references manifests (repository, digest)
 );
 create index manifest_blobs_blob_idx on manifest_blobs (repository, blob_digest);
+
+create table project_storage_usage (
+	namespace  text        not null primary key,
+	size       bigint      not null default 0,
+	updated_at timestamptz not null default now()
+);

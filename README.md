@@ -45,6 +45,17 @@ Apply the schema before first run:
 psql $DB_URL -f schema.sql
 ```
 
+### Tables
+
+| Table | Description |
+|---|---|
+| `repositories` | Repository metadata (name, namespace, created_at) |
+| `manifests` | OCI manifests per repository |
+| `tags` | Tag → manifest digest mappings |
+| `blobs` | Blob metadata including size |
+| `manifest_blobs` | Manifest → blob references (rebuilt by `indexManifests`) |
+| `project_storage_usage` | Pre-calculated total blob storage per project namespace (updated by `calculateProjectStorage`) |
+
 ## API
 
 ### Registry (`/v2/`)
@@ -100,6 +111,22 @@ List manifests for a repository with their digest and creation time.
 
 Requires `registry.get` permission.
 
+#### `POST /api/getProjectStorage`
+
+Get the pre-calculated total blob storage used across all repositories in a project. The value is updated once per day by the `calculateProjectStorage` scheduler job. Returns `size: 0` with no `updatedAt` if the job has not run yet.
+
+```json
+{ "project": "my-project" }
+```
+
+Response:
+
+```json
+{ "size": 1073741824, "updatedAt": "2024-01-15T03:00:00Z" }
+```
+
+Requires `registry.get` permission.
+
 #### `POST /api/deleteManifest`
 
 Delete a single manifest by digest, including all tags that point to it and their GCS objects. Blobs referenced by the manifest are **not** deleted immediately — they are cleaned up by the blob GC.
@@ -124,25 +151,68 @@ Requires `registry.push` permission.
 
 ### `POST /internal/indexManifests`
 
-Reads every manifest that has no `manifest_blobs` rows yet, fetches its content from GCS, and records which blobs it references. Intended to be called by Cloud Scheduler rather than run as a background goroutine, so only one replica processes the job at a time.
+Reads every manifest that has no `manifest_blobs` rows yet, fetches its content from GCS, and records which blobs it references. Runs as part of `POST /internal/runAll`.
 
 Protected by `Authorization: Bearer <INTERNAL_SECRET>`. If `INTERNAL_SECRET` is not set the check is skipped (local dev only).
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `INTERNAL_SECRET` | no | — | Bearer token required on the `Authorization` header |
-
 Returns `204 No Content` on success.
+
+To trigger manually:
+
+```sh
+curl -X POST https://registry.deploys.app/internal/indexManifests \
+  -H "Authorization: Bearer <INTERNAL_SECRET>"
+```
+
+### `POST /internal/runBlobGC`
+
+Deletes blobs that are not referenced by any manifest and are older than 1 day. The 1-day grace period covers blobs that have been uploaded but whose manifest push is still in flight. Runs as part of `POST /internal/runAll`.
+
+Returns `204 No Content` on success. Protected by the same `INTERNAL_SECRET` bearer token.
+
+To trigger manually:
+
+```sh
+curl -X POST https://registry.deploys.app/internal/runBlobGC \
+  -H "Authorization: Bearer <INTERNAL_SECRET>"
+```
+
+### `POST /internal/calculateProjectStorage`
+
+Calculates the total blob storage used by each project namespace and stores the result in the `project_storage_usage` table. Results are served via `POST /api/getProjectStorage`.
+
+Because the `blobs` table can be very large, this is designed to run once per day rather than on every API request.
+
+Returns `204 No Content` on success. Protected by the same `INTERNAL_SECRET` bearer token.
+
+To trigger manually:
+
+```sh
+curl -X POST https://registry.deploys.app/internal/calculateProjectStorage \
+  -H "Authorization: Bearer <INTERNAL_SECRET>"
+```
+
+### `POST /internal/runAll`
+
+Runs all scheduled jobs sequentially in a single HTTP call:
+
+1. `indexManifests`
+2. `runBlobGC`
+3. `calculateProjectStorage`
+
+Use this as the single Cloud Scheduler target so only one scheduler job is needed. If any step fails the endpoint returns `500` immediately (remaining steps are skipped) and the error is logged.
+
+Returns `204 No Content` on success. Protected by the same `INTERNAL_SECRET` bearer token.
 
 #### Cloud Scheduler setup
 
-Create a scheduler job that calls the endpoint daily. Replace the placeholders with your actual values.
+Replace the individual per-job scheduler entries with a single job targeting `/internal/runAll`:
 
 ```sh
-gcloud scheduler jobs create http registry-index-manifests \
+gcloud scheduler jobs create http registry-run-all \
   --location=asia-southeast1 \
   --schedule="0 2 * * *" \
-  --uri="https://registry.deploys.app/internal/indexManifests" \
+  --uri="https://registry.deploys.app/internal/runAll" \
   --http-method=POST \
   --headers="Authorization=Bearer <INTERNAL_SECRET>" \
   --attempt-deadline=30m \
@@ -152,42 +222,16 @@ gcloud scheduler jobs create http registry-index-manifests \
 To update the schedule or secret on an existing job:
 
 ```sh
-gcloud scheduler jobs update http registry-index-manifests \
+gcloud scheduler jobs update http registry-run-all \
   --location=asia-southeast1 \
   --schedule="0 2 * * *" \
   --headers="Authorization=Bearer <INTERNAL_SECRET>"
 ```
 
-To trigger the job immediately (e.g. after initial deploy):
+To trigger immediately (e.g. after initial deploy):
 
 ```sh
-gcloud scheduler jobs run registry-index-manifests \
-  --location=asia-southeast1
-```
-
-### `POST /internal/runBlobGC`
-
-Deletes blobs that are not referenced by any manifest and are older than 1 day. The 1-day grace period covers blobs that have been uploaded but whose manifest push is still in flight.
-
-Returns `204 No Content` on success. Protected by the same `INTERNAL_SECRET` bearer token as `indexManifests`.
-
-#### Cloud Scheduler setup
-
-```sh
-gcloud scheduler jobs create http registry-blob-gc \
-  --location=asia-southeast1 \
-  --schedule="0 3 * * *" \
-  --uri="https://registry.deploys.app/internal/runBlobGC" \
-  --http-method=POST \
-  --headers="Authorization=Bearer <INTERNAL_SECRET>" \
-  --attempt-deadline=30m \
-  --time-zone="UTC"
-```
-
-To trigger manually:
-
-```sh
-gcloud scheduler jobs run registry-blob-gc \
+gcloud scheduler jobs run registry-run-all \
   --location=asia-southeast1
 ```
 
