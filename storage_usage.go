@@ -7,7 +7,10 @@ import (
 
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
+	"github.com/acoshift/pgsql/pgstmt"
 )
+
+const storageChunkSize = 1000
 
 // calculateProjectStorage sums blob sizes per project namespace and upserts
 // the result into project_storage_usage. Intended to run once per day via
@@ -43,13 +46,21 @@ func (a *App) calculateProjectStorage(ctx context.Context) error {
 		return nil
 	}
 
-	for _, u := range usages {
-		if _, err := pgctx.Exec(ctx, `
-			insert into project_storage_usage (namespace, size, updated_at)
-			values ($1, $2, now())
-			on conflict (namespace) do update set size = $2, updated_at = now()
-		`, u.namespace, u.size); err != nil {
-			return fmt.Errorf("calculate project storage: upsert %s: %w", u.namespace, err)
+	for i := 0; i < len(usages); i += storageChunkSize {
+		chunk := usages[i:min(i+storageChunkSize, len(usages))]
+		_, err := pgstmt.Insert(func(b pgstmt.InsertStatement) {
+			b.Into("project_storage_usage")
+			b.Columns("namespace", "size", "updated_at")
+			for _, u := range chunk {
+				b.Value(u.namespace, u.size, pgstmt.Default)
+			}
+			b.OnConflictOnConstraint("project_storage_usage_pkey").DoUpdate(func(b pgstmt.UpdateStatement) {
+				b.Set("size").ToRaw("excluded.size")
+				b.Set("updated_at").ToRaw("now()")
+			})
+		}).ExecWith(ctx)
+		if err != nil {
+			return fmt.Errorf("calculate project storage: upsert: %w", err)
 		}
 	}
 
