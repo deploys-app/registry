@@ -98,6 +98,38 @@ func main() {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("POST /internal/calculateProjectStorage", func(w http.ResponseWriter, r *http.Request) {
+		if !internalAuth(w, r) {
+			return
+		}
+		if err := app.calculateProjectStorage(r.Context()); err != nil {
+			slog.Error("calculateProjectStorage", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /internal/runAll", func(w http.ResponseWriter, r *http.Request) {
+		if !internalAuth(w, r) {
+			return
+		}
+		ctx := r.Context()
+		for _, job := range []struct {
+			name string
+			fn   func(context.Context) error
+		}{
+			{"indexManifests", app.rebuildManifestBlobsIndex},
+			{"runBlobGC", app.runBlobGC},
+			{"calculateProjectStorage", app.calculateProjectStorage},
+		} {
+			if err := job.fn(ctx); err != nil {
+				slog.Error(job.name, "error", err)
+				http.Error(w, job.name+": "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 
 	port := config.StringDefault("PORT", "8080")
 	slog.Info("start registry", "addr", ":"+port)

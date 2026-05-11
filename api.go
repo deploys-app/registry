@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -22,6 +24,7 @@ func (a *App) mountAPI(mux *http.ServeMux) {
 	api.Handle("POST /api/get", m.Handler(a.apiGet))
 	api.Handle("POST /api/getTags", m.Handler(a.apiGetTags))
 	api.Handle("POST /api/getManifests", m.Handler(a.apiGetManifests))
+	api.Handle("POST /api/getProjectStorage", m.Handler(a.apiGetProjectStorage))
 	api.Handle("POST /api/delete", m.Handler(a.apiDelete))
 	api.Handle("POST /api/deleteManifest", m.Handler(a.apiDeleteManifest))
 	api.Handle("POST /api/untag", m.Handler(a.apiUntag))
@@ -52,7 +55,7 @@ type apiListResult struct {
 
 func (a *App) apiList(ctx context.Context, req *apiListRequest) (*apiListResult, error) {
 	if !checkPermission(ctx, req.Project, permList) {
-		return nil, arpc.NewError("iam: forbidden")
+		return nil, errForbidden
 	}
 
 	var items []apiListItem
@@ -109,7 +112,7 @@ type apiGetResult struct {
 
 func (a *App) apiGet(ctx context.Context, req *apiGetRequest) (*apiGetResult, error) {
 	if !checkPermission(ctx, req.Project, permGet) {
-		return nil, arpc.NewError("iam: forbidden")
+		return nil, errForbidden
 	}
 
 	fullName := req.Project + "/" + req.Repository
@@ -122,7 +125,7 @@ func (a *App) apiGet(ctx context.Context, req *apiGetRequest) (*apiGetResult, er
 		where name = $1 and namespace = $2
 	`, fullName, req.Project).Scan(&name, &createdAt)
 	if err != nil {
-		return nil, arpc.NewError("repository not found")
+		return nil, errRepoNotFound
 	}
 
 	var size int64
@@ -167,7 +170,7 @@ type apiGetTagsResult struct {
 
 func (a *App) apiGetTags(ctx context.Context, req *apiGetTagsRequest) (*apiGetTagsResult, error) {
 	if !checkPermission(ctx, req.Project, permGet) {
-		return nil, arpc.NewError("iam: forbidden")
+		return nil, errForbidden
 	}
 
 	fullName := req.Project + "/" + req.Repository
@@ -177,7 +180,7 @@ func (a *App) apiGetTags(ctx context.Context, req *apiGetTagsRequest) (*apiGetTa
 		select name from repositories where name = $1 and namespace = $2
 	`, fullName, req.Project).Scan(&repoName)
 	if err != nil {
-		return nil, arpc.NewError("repository not found")
+		return nil, errRepoNotFound
 	}
 
 	var items []apiTagItem
@@ -236,7 +239,7 @@ type apiGetManifestsResult struct {
 
 func (a *App) apiGetManifests(ctx context.Context, req *apiGetManifestsRequest) (*apiGetManifestsResult, error) {
 	if !checkPermission(ctx, req.Project, permGet) {
-		return nil, arpc.NewError("iam: forbidden")
+		return nil, errForbidden
 	}
 
 	fullName := req.Project + "/" + req.Repository
@@ -246,7 +249,7 @@ func (a *App) apiGetManifests(ctx context.Context, req *apiGetManifestsRequest) 
 		select name from repositories where name = $1 and namespace = $2
 	`, fullName, req.Project).Scan(&repoName)
 	if err != nil {
-		return nil, arpc.NewError("repository not found")
+		return nil, errRepoNotFound
 	}
 
 	var items []apiManifestItem
@@ -276,6 +279,50 @@ func (a *App) apiGetManifests(ctx context.Context, req *apiGetManifestsRequest) 
 	}, nil
 }
 
+// getProjectStorage
+
+type apiGetProjectStorageRequest struct {
+	Project string `json:"project"`
+}
+
+func (r *apiGetProjectStorageRequest) Valid() error {
+	if r.Project == "" {
+		return arpc.NewError("project required")
+	}
+	return nil
+}
+
+type apiGetProjectStorageResult struct {
+	Size      int64      `json:"size"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+}
+
+func (a *App) apiGetProjectStorage(ctx context.Context, req *apiGetProjectStorageRequest) (*apiGetProjectStorageResult, error) {
+	if !checkPermission(ctx, req.Project, permGet) {
+		return nil, errForbidden
+	}
+
+	var size int64
+	var updatedAt time.Time
+	err := pgctx.QueryRow(ctx, `
+		select size, updated_at
+		from project_storage_usage
+		where namespace = $1
+	`, req.Project).Scan(&size, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No record yet — job hasn't run or project has no data
+		return &apiGetProjectStorageResult{Size: 0}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &apiGetProjectStorageResult{
+		Size:      size,
+		UpdatedAt: &updatedAt,
+	}, nil
+}
+
 // delete
 
 type apiDeleteRequest struct {
@@ -295,7 +342,7 @@ func (r *apiDeleteRequest) Valid() error {
 
 func (a *App) apiDelete(ctx context.Context, req *apiDeleteRequest) error {
 	if !checkPermission(ctx, req.Project, permPush) {
-		return arpc.NewError("iam: forbidden")
+		return errForbidden
 	}
 
 	fullName := req.Project + "/" + req.Repository
@@ -307,7 +354,7 @@ func (a *App) apiDelete(ctx context.Context, req *apiDeleteRequest) error {
 		return err
 	}
 	if !exists {
-		return arpc.NewError("repository not found")
+		return errRepoNotFound
 	}
 
 	// Detach from the request context so the deletion runs to completion
@@ -372,7 +419,7 @@ func (r *apiDeleteManifestRequest) Valid() error {
 
 func (a *App) apiDeleteManifest(ctx context.Context, req *apiDeleteManifestRequest) error {
 	if !checkPermission(ctx, req.Project, permPush) {
-		return arpc.NewError("iam: forbidden")
+		return errForbidden
 	}
 
 	fullName := req.Project + "/" + req.Repository
@@ -384,7 +431,7 @@ func (a *App) apiDeleteManifest(ctx context.Context, req *apiDeleteManifestReque
 		return err
 	}
 	if !exists {
-		return arpc.NewError("manifest not found")
+		return errManifestNotFound
 	}
 
 	// Detach from the request context so the deletion runs to completion
@@ -465,7 +512,7 @@ func (r *apiUntagRequest) Valid() error {
 
 func (a *App) apiUntag(ctx context.Context, req *apiUntagRequest) error {
 	if !checkPermission(ctx, req.Project, permPush) {
-		return arpc.NewError("iam: forbidden")
+		return errForbidden
 	}
 
 	fullName := req.Project + "/" + req.Repository
@@ -477,7 +524,7 @@ func (a *App) apiUntag(ctx context.Context, req *apiUntagRequest) error {
 		return err
 	}
 	if !exists {
-		return arpc.NewError("tag not found")
+		return errTagNotFound
 	}
 
 	// Delete the tag-named GCS object (best-effort; ignore if already gone)
