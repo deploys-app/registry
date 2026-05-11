@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"strings"
@@ -307,9 +308,12 @@ func (a *App) apiGetProjectStorage(ctx context.Context, req *apiGetProjectStorag
 		from project_storage_usage
 		where namespace = $1
 	`, req.Project).Scan(&size, &updatedAt)
-	if err != nil {
+	if err == sql.ErrNoRows {
 		// No record yet — job hasn't run or project has no data
 		return &apiGetProjectStorageResult{Size: 0}, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	return &apiGetProjectStorageResult{
