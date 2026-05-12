@@ -139,7 +139,7 @@ func authMiddleware(next http.Handler) http.Handler {
 
 		path := r.URL.Path
 		if path == "/v2/" {
-			if auth == "" || getEmail(auth) == "" {
+			if auth != "" && getEmail(auth) == "" {
 				registryUnauthorized(w, r)
 				return
 			}
