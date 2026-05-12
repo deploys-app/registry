@@ -82,9 +82,6 @@ func getEmail(auth string) string {
 
 func checkPermission(ctx context.Context, project, permission string) bool {
 	auth := authFromContext(ctx)
-	if auth == "" {
-		return false
-	}
 
 	cacheKey := "registry|perm|" + auth + "|" + project + "|" + permission
 	if v, ok := cachestore.Get[bool](cacheKey); ok {
@@ -96,7 +93,9 @@ func checkPermission(ctx context.Context, project, permission string) bool {
 		"permissions": []string{permission},
 	})
 	req, _ := http.NewRequest(http.MethodPost, authEndpoint, bytes.NewReader(body))
-	req.Header.Set("Authorization", auth)
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -131,17 +130,16 @@ func checkPermission(ctx context.Context, project, permission string) bool {
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			registryUnauthorized(w, r)
-			return
-		}
 
-		ctx := context.WithValue(r.Context(), authKey, auth)
-		r = r.WithContext(ctx)
+		ctx := r.Context()
+		if auth != "" {
+			ctx = context.WithValue(ctx, authKey, auth)
+			r = r.WithContext(ctx)
+		}
 
 		path := r.URL.Path
 		if path == "/v2/" {
-			if getEmail(auth) == "" {
+			if auth == "" || getEmail(auth) == "" {
 				registryUnauthorized(w, r)
 				return
 			}
