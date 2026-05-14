@@ -16,6 +16,7 @@ require (
 	github.com/lib/pq v1.12.3
 	github.com/moonrhythm/cachestore v0.0.0-20241226112208-fd22884c5b60
 	github.com/moonrhythm/parapet v0.13.6
+	github.com/prometheus/client_golang v1.20.5
 	golang.org/x/sync v0.20.0
 	google.golang.org/api v0.274.0
 )
@@ -45,6 +46,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
+	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0 // indirect
@@ -59,7 +61,12 @@ require (
 	github.com/googleapis/gax-go/v2 v2.21.0 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/kavu/go_reuseport v1.5.0 // indirect
+	github.com/klauspost/compress v1.17.9 // indirect
+	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
+	github.com/prometheus/client_model v0.6.2 // indirect
+	github.com/prometheus/common v0.55.0 // indirect
+	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.39.0 // indirect

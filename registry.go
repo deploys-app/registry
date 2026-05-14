@@ -142,7 +142,12 @@ func (a *App) getBlob(w http.ResponseWriter, r *http.Request, name, digest strin
 	w.Header().Set("Docker-Content-Digest", digest)
 	w.Header().Set("Content-Length", strconv.FormatInt(attrs.Size, 10))
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	io.Copy(w, rc)
+	n, _ := io.Copy(w, rc)
+
+	if projectID := projectIDFromContext(ctx); projectID != "" {
+		downloadCount.WithLabelValues(projectID).Inc()
+		egressBytes.WithLabelValues(projectID).Add(float64(n))
+	}
 }
 
 // end-2 HEAD
@@ -238,6 +243,8 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 	digest := q.Get("digest")
 	origin := q.Get("origin")
 
+	projectID := projectIDFromContext(ctx)
+
 	// end-11: cross-repo mount
 	if mount != "" && from != "" {
 		if _, err := a.Bucket.Object(fmt.Sprintf("%s/blobs/%s", name, mount)).Attrs(ctx); err == nil {
@@ -257,6 +264,10 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 						registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 						return
 					}
+					if projectID != "" {
+						uploadCount.WithLabelValues(projectID).Inc()
+						uploadBytes.WithLabelValues(projectID).Add(float64(size))
+					}
 					w.Header().Set("Location", "/v2/"+name+"/blobs/"+mount)
 					w.Header().Set("Docker-Content-Digest", mount)
 					w.WriteHeader(http.StatusCreated)
@@ -271,6 +282,10 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 					if err := a.insertBlob(ctx, name, mount, srcAttrs.Size); err != nil {
 						registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 						return
+					}
+					if projectID != "" {
+						uploadCount.WithLabelValues(projectID).Inc()
+						uploadBytes.WithLabelValues(projectID).Add(float64(srcAttrs.Size))
 					}
 					w.Header().Set("Location", "/v2/"+name+"/blobs/"+mount)
 					w.Header().Set("Docker-Content-Digest", mount)
@@ -288,6 +303,14 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 			if err := a.writeBlob(ctx, name, digest, r.Body); err != nil {
 				registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 				return
+			}
+			if projectID != "" {
+				size := r.ContentLength
+				if size < 0 {
+					size = 0
+				}
+				uploadCount.WithLabelValues(projectID).Inc()
+				uploadBytes.WithLabelValues(projectID).Add(float64(size))
 			}
 		}
 		w.Header().Set("Location", "/v2/"+name+"/blobs/"+digest)
@@ -413,6 +436,11 @@ func (a *App) putUpload(w http.ResponseWriter, r *http.Request, name, reference 
 	if err := a.insertBlob(ctx, name, digest, state.Size); err != nil {
 		registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
+	}
+
+	if projectID := projectIDFromContext(ctx); projectID != "" {
+		uploadCount.WithLabelValues(projectID).Inc()
+		uploadBytes.WithLabelValues(projectID).Add(float64(state.Size))
 	}
 
 	w.Header().Set("Location", "/v2/"+name+"/blobs/"+digest)

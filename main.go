@@ -17,6 +17,7 @@ import (
 	"github.com/moonrhythm/parapet"
 	"github.com/moonrhythm/parapet/pkg/healthz"
 	"github.com/moonrhythm/parapet/pkg/logger"
+	"github.com/moonrhythm/parapet/pkg/prom"
 )
 
 var config = configfile.NewEnvReader()
@@ -130,6 +131,14 @@ func main() {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+
+	promAddr := config.StringDefault("prom_addr", ":9187")
+	go func() {
+		slog.Info("start prometheus", "addr", promAddr)
+		if err := prom.Start(promAddr); err != nil {
+			slog.Error("prometheus server", "error", err)
+		}
+	}()
 
 	port := config.StringDefault("PORT", "8080")
 	slog.Info("start registry", "addr", ":"+port)
