@@ -26,6 +26,7 @@ type contextKey int
 const (
 	namespaceKey contextKey = iota
 	authKey
+	projectIDKey
 )
 
 func namespaceFromContext(ctx context.Context) string {
@@ -35,6 +36,11 @@ func namespaceFromContext(ctx context.Context) string {
 
 func authFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(authKey).(string)
+	return v
+}
+
+func projectIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(projectIDKey).(string)
 	return v
 }
 
@@ -80,11 +86,16 @@ func getEmail(auth string) string {
 	return res.Result.Email
 }
 
-func checkPermission(ctx context.Context, project, permission string) bool {
+type permissionResult struct {
+	OK        bool
+	ProjectID string
+}
+
+func checkPermissionWithID(ctx context.Context, project, permission string) permissionResult {
 	auth := authFromContext(ctx)
 
 	cacheKey := "registry|perm|" + auth + "|" + project + "|" + permission
-	if v, ok := cachestore.Get[bool](cacheKey); ok {
+	if v, ok := cachestore.Get[permissionResult](cacheKey); ok {
 		return v
 	}
 
@@ -100,11 +111,11 @@ func checkPermission(ctx context.Context, project, permission string) bool {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false
+		return permissionResult{}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false
+		return permissionResult{}
 	}
 
 	var res struct {
@@ -112,6 +123,7 @@ func checkPermission(ctx context.Context, project, permission string) bool {
 		Result struct {
 			Authorized bool `json:"authorized"`
 			Project    struct {
+				ID             string `json:"id"`
 				BillingAccount struct {
 					Active bool `json:"active"`
 				} `json:"billingAccount"`
@@ -119,12 +131,22 @@ func checkPermission(ctx context.Context, project, permission string) bool {
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return false
+		return permissionResult{}
 	}
 
-	ok := res.OK && res.Result.Authorized && res.Result.Project.BillingAccount.Active
-	cachestore.Set(cacheKey, ok, &cachestore.SetOptions{TTL: cacheTTL})
-	return ok
+	var result permissionResult
+	if res.OK && res.Result.Authorized && res.Result.Project.BillingAccount.Active {
+		result = permissionResult{
+			OK:        true,
+			ProjectID: res.Result.Project.ID,
+		}
+	}
+	cachestore.Set(cacheKey, result, &cachestore.SetOptions{TTL: cacheTTL})
+	return result
+}
+
+func checkPermission(ctx context.Context, project, permission string) bool {
+	return checkPermissionWithID(ctx, project, permission).OK
 }
 
 func authMiddleware(next http.Handler) http.Handler {
@@ -156,8 +178,9 @@ func authMiddleware(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, namespaceKey, project)
 		r = r.WithContext(ctx)
 
-		if checkPermission(ctx, project, permPush) {
-			next.ServeHTTP(w, r)
+		if res := checkPermissionWithID(ctx, project, permPush); res.OK {
+			ctx = context.WithValue(ctx, projectIDKey, res.ProjectID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
@@ -166,8 +189,9 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if checkPermission(ctx, project, permPull) {
-			next.ServeHTTP(w, r)
+		if res := checkPermissionWithID(ctx, project, permPull); res.OK {
+			ctx = context.WithValue(ctx, projectIDKey, res.ProjectID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
