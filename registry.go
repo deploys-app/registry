@@ -27,7 +27,8 @@ const chunkMinLength = 5 * 1024 * 1024 // 5 MiB
 
 // App holds shared dependencies.
 type App struct {
-	Bucket *storage.BucketHandle
+	Bucket    *storage.BucketHandle
+	CDNDomain string
 }
 
 var (
@@ -36,6 +37,7 @@ var (
 	reTags        = regexp.MustCompile(`^/v2/(.+)/tags/list$`)
 	reUploadStart = regexp.MustCompile(`^/v2/(.+)/blobs/uploads/?$`)
 	reUploadChunk = regexp.MustCompile(`^/v2/(.+)/blobs/uploads/([^/]+)$`)
+	reCDNBlob     = regexp.MustCompile(`^/_cdn/(.+)/blobs/(sha256:[a-f0-9]+)$`)
 )
 
 func (a *App) registryHandler(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +134,16 @@ func (a *App) getBlob(w http.ResponseWriter, r *http.Request, name, digest strin
 		return
 	}
 
+	if a.CDNDomain != "" {
+		if projectID := projectIDFromContext(ctx); projectID != "" {
+			downloadCount.WithLabelValues(projectID).Inc()
+			egressBytes.WithLabelValues(projectID).Add(float64(attrs.Size))
+		}
+		w.Header().Set("Docker-Content-Digest", digest)
+		http.Redirect(w, r, "https://"+a.CDNDomain+"/"+name+"/blobs/"+digest, http.StatusTemporaryRedirect)
+		return
+	}
+
 	rc, err := obj.NewReader(ctx)
 	if err != nil {
 		registryError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
@@ -148,6 +160,50 @@ func (a *App) getBlob(w http.ResponseWriter, r *http.Request, name, digest strin
 		downloadCount.WithLabelValues(projectID).Inc()
 		egressBytes.WithLabelValues(projectID).Add(float64(n))
 	}
+}
+
+// cdnHandler serves blobs to the CDN edge. Unauthenticated — blobs are
+// content-addressed and only reachable if you know the digest.
+func (a *App) cdnHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	m := reCDNBlob.FindStringSubmatch(r.URL.Path)
+	if m == nil {
+		http.NotFound(w, r)
+		return
+	}
+	name, digest := m[1], m[2]
+	slog.Debug("cdn blob", "name", name, "digest", digest)
+
+	ctx := r.Context()
+	obj := a.Bucket.Object(fmt.Sprintf("%s/blobs/%s", name, digest))
+	attrs, err := obj.Attrs(ctx)
+	if isNotFound(err) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Docker-Content-Digest", digest)
+	w.Header().Set("Content-Length", strconv.FormatInt(attrs.Size, 10))
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	rc, err := obj.NewReader(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rc.Close()
+	io.Copy(w, rc)
 }
 
 // end-2 HEAD
