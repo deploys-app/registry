@@ -57,7 +57,10 @@ func main() {
 
 	bucket := storageClient.Bucket(config.MustString("bucket_name"))
 
-	app := &App{Bucket: bucket}
+	app := &App{
+		Bucket:    bucket,
+		CDNDomain: config.String("cdn_domain"),
+	}
 
 	internalSecret := config.String("internal_secret")
 
@@ -66,6 +69,7 @@ func main() {
 		w.Write([]byte("Deploys.app Registry Service"))
 	})
 	mux.Handle("/v2/", authMiddleware(http.HandlerFunc(app.registryHandler)))
+	mux.HandleFunc("/_cdn/", app.cdnHandler)
 	app.mountAPI(mux)
 	internalAuth := func(w http.ResponseWriter, r *http.Request) bool {
 		if internalSecret != "" && subtle.ConstantTimeCompare(

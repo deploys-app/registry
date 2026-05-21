@@ -40,6 +40,7 @@ Single-binary Go service (`package main`) — all files compile together with no
 HTTP → parapet (healthz, logger) → pgctx middleware (injects *sql.DB into ctx)
          ├── /v2/   → authMiddleware → registryHandler (OCI spec)
          ├── /api/  → apiAuthMiddleware → arpc router (management API)
+         ├── /_cdn/ → cdnHandler (unauthenticated blob origin for the CDN)
          └── /internal/  → internalAuth (Bearer token) → job handlers
 ```
 
@@ -56,3 +57,5 @@ HTTP → parapet (healthz, logger) → pgctx middleware (injects *sql.DB into ct
 **Auth caching** — `checkPermission` and `getEmail` cache results in `cachestore` (in-process, 30 s TTL) to avoid hammering `api.deploys.app` on every request.
 
 **Context propagation** — long-running delete operations call `context.WithoutCancel(ctx)` so the deletion completes even if the HTTP client disconnects. The detached context still carries the pgctx DB connection.
+
+**CDN offload** — when `CDN_DOMAIN` is set, `getBlob` returns a 307 redirect to `https://{CDN_DOMAIN}/{name}/blobs/{digest}` instead of streaming the blob. The CDN domain is expected to proxy its root to the registry's `/_cdn/` path; the `/_cdn/` handler serves blobs unauthenticated (blobs are content-addressed by digest). Internal callers (private/loopback/link-local `X-Real-Ip`) bypass the redirect and stream directly — this keeps in-cluster pulls off the public CDN path.
