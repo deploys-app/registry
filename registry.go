@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -134,7 +135,7 @@ func (a *App) getBlob(w http.ResponseWriter, r *http.Request, name, digest strin
 		return
 	}
 
-	if a.CDNDomain != "" {
+	if a.CDNDomain != "" && !isInternalClient(r) {
 		if projectID := projectIDFromContext(ctx); projectID != "" {
 			downloadCount.WithLabelValues(projectID).Inc()
 			egressBytes.WithLabelValues(projectID).Add(float64(attrs.Size))
@@ -938,6 +939,17 @@ func registryError(w http.ResponseWriter, status int, code, message string) {
 	json.NewEncoder(w).Encode(registryErrorBody{
 		Errors: []registryErrorItem{{Code: code, Message: message, Detail: message}},
 	})
+}
+
+// isInternalClient returns true when the request originates from a
+// private/loopback/link-local IP per the X-Real-Ip header. Internal callers
+// (in-cluster pulls) bypass the CDN redirect and read blobs directly.
+func isInternalClient(r *http.Request) bool {
+	ip := net.ParseIP(r.Header.Get("X-Real-Ip"))
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
 }
 
 func isNotFound(err error) bool {
