@@ -8,12 +8,17 @@ import (
 	"time"
 
 	"github.com/moonrhythm/cachestore"
+	"github.com/moonrhythm/sf"
+)
+
+// Overridable in tests; production points at the real API.
+var (
+	authEndpoint = "https://api.deploys.app/me.authorized"
+	infoEndpoint = "https://api.deploys.app/me.get"
 )
 
 const (
-	authEndpoint = "https://api.deploys.app/me.authorized"
-	infoEndpoint = "https://api.deploys.app/me.get"
-	cacheTTL     = 30 * time.Second
+	cacheTTL = 30 * time.Second
 
 	permPull = "registry.pull"
 	permPush = "registry.push"
@@ -53,37 +58,51 @@ func apiAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func getEmail(auth string) string {
+func getEmail(ctx context.Context, auth string) string {
 	cacheKey := "registry|email|" + auth
 	if v, ok := cachestore.Get[string](cacheKey); ok {
 		return v
 	}
 
-	req, _ := http.NewRequest(http.MethodPost, infoEndpoint, bytes.NewReader([]byte(`{}`)))
-	req.Header.Set("Authorization", auth)
-	req.Header.Set("Content-Type", "application/json")
+	// Collapse concurrent /v2/ pings carrying the same token into a single
+	// /me.get round-trip. The result is cached for 30s (cacheTTL); sf.Do
+	// dedupe matters at the cold-cache edge and right after that entry
+	// expires under load.
+	email, _, _ := sf.Do(ctx, cacheKey, func(ctx context.Context) (string, error) {
+		// Re-check the cache: a sibling caller may have populated it
+		// while we were queued behind sf's mutex.
+		if v, ok := cachestore.Get[string](cacheKey); ok {
+			return v, nil
+		}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, infoEndpoint, bytes.NewReader([]byte(`{}`)))
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("Content-Type", "application/json")
 
-	var res struct {
-		OK     bool `json:"ok"`
-		Result struct {
-			Email string `json:"email"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil || !res.OK {
-		return ""
-	}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			// Don't cache transport failures — let the next caller retry.
+			return "", nil
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return "", nil
+		}
 
-	cachestore.Set(cacheKey, res.Result.Email, &cachestore.SetOptions{TTL: cacheTTL})
-	return res.Result.Email
+		var res struct {
+			OK     bool `json:"ok"`
+			Result struct {
+				Email string `json:"email"`
+			} `json:"result"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil || !res.OK {
+			return "", nil
+		}
+
+		cachestore.Set(cacheKey, res.Result.Email, &cachestore.SetOptions{TTL: cacheTTL})
+		return res.Result.Email, nil
+	})
+	return email
 }
 
 type permissionResult struct {
@@ -99,49 +118,63 @@ func checkPermissionWithID(ctx context.Context, project, permission string) perm
 		return v
 	}
 
-	body, _ := json.Marshal(map[string]any{
-		"project":     project,
-		"permissions": []string{permission},
-	})
-	req, _ := http.NewRequest(http.MethodPost, authEndpoint, bytes.NewReader(body))
-	if auth != "" {
-		req.Header.Set("Authorization", auth)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return permissionResult{}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return permissionResult{}
-	}
-
-	var res struct {
-		OK     bool `json:"ok"`
-		Result struct {
-			Authorized bool `json:"authorized"`
-			Project    struct {
-				ID             string `json:"id"`
-				BillingAccount struct {
-					Active bool `json:"active"`
-				} `json:"billingAccount"`
-			} `json:"project"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return permissionResult{}
-	}
-
-	var result permissionResult
-	if res.OK && res.Result.Authorized && res.Result.Project.BillingAccount.Active {
-		result = permissionResult{
-			OK:        true,
-			ProjectID: res.Result.Project.ID,
+	// Collapse a thundering herd of concurrent requests from the same
+	// caller into a single /me.authorized round-trip. The result is
+	// cached for 30s (cacheTTL); sf.Do dedupe matters at the cold-cache
+	// edge and right after that entry expires under load.
+	result, _, _ := sf.Do(ctx, cacheKey, func(ctx context.Context) (permissionResult, error) {
+		// Re-check the cache: a sibling caller may have populated it
+		// while we were queued behind sf's mutex.
+		if v, ok := cachestore.Get[permissionResult](cacheKey); ok {
+			return v, nil
 		}
-	}
-	cachestore.Set(cacheKey, result, &cachestore.SetOptions{TTL: cacheTTL})
+
+		body, _ := json.Marshal(map[string]any{
+			"project":     project,
+			"permissions": []string{permission},
+		})
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, authEndpoint, bytes.NewReader(body))
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			// Don't cache transport failures — let the next caller retry.
+			return permissionResult{}, nil
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return permissionResult{}, nil
+		}
+
+		var res struct {
+			OK     bool `json:"ok"`
+			Result struct {
+				Authorized bool `json:"authorized"`
+				Project    struct {
+					ID             string `json:"id"`
+					BillingAccount struct {
+						Active bool `json:"active"`
+					} `json:"billingAccount"`
+				} `json:"project"`
+			} `json:"result"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			return permissionResult{}, nil
+		}
+
+		var result permissionResult
+		if res.OK && res.Result.Authorized && res.Result.Project.BillingAccount.Active {
+			result = permissionResult{
+				OK:        true,
+				ProjectID: res.Result.Project.ID,
+			}
+		}
+		cachestore.Set(cacheKey, result, &cachestore.SetOptions{TTL: cacheTTL})
+		return result, nil
+	})
 	return result
 }
 
@@ -161,7 +194,7 @@ func authMiddleware(next http.Handler) http.Handler {
 
 		path := r.URL.Path
 		if path == "/v2/" {
-			if auth != "" && getEmail(auth) == "" {
+			if auth != "" && getEmail(ctx, auth) == "" {
 				registryUnauthorized(w, r)
 				return
 			}
