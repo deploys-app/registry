@@ -4,17 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"cloud.google.com/go/storage"
 	"github.com/acoshift/arpc/v2"
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
-	"golang.org/x/sync/errgroup"
-	"google.golang.org/api/iterator"
 )
 
 func (a *App) mountAPI(mux *http.ServeMux) {
@@ -363,21 +359,8 @@ func (a *App) apiDelete(ctx context.Context, req *apiDeleteRequest) error {
 	dctx := context.WithoutCancel(ctx)
 
 	// Delete all GCS objects under this repository prefix
-	it := a.Bucket.Objects(dctx, &storage.Query{
-		Prefix:     fullName + "/",
-		Projection: storage.ProjectionNoACL,
-	})
-	for {
-		attrs, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if err := a.Bucket.Object(attrs.Name).Delete(dctx); err != nil && !isNotFound(err) {
-			return err
-		}
+	if err := a.deleteRepositoryObjects(dctx, fullName); err != nil {
+		return err
 	}
 
 	// Delete DB records in FK dependency order
@@ -452,26 +435,8 @@ func (a *App) apiDeleteManifest(ctx context.Context, req *apiDeleteManifestReque
 		return err
 	}
 
-	// Delete GCS objects (digest-addressed manifest + all tag-addressed manifests) in parallel.
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", fullName, req.Digest))
-		if err := obj.Delete(gctx); err != nil && !isNotFound(err) {
-			return err
-		}
-		return nil
-	})
-	for _, tag := range tags {
-		tag := tag
-		g.Go(func() error {
-			obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", fullName, tag))
-			if err := obj.Delete(gctx); err != nil && !isNotFound(err) {
-				return err
-			}
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
+	// Delete GCS objects (digest-addressed manifest + all tag-addressed manifests).
+	if err := a.deleteManifestObjects(ctx, fullName, req.Digest, tags); err != nil {
 		return err
 	}
 
@@ -528,8 +493,7 @@ func (a *App) apiUntag(ctx context.Context, req *apiUntagRequest) error {
 	}
 
 	// Delete the tag-named GCS object (best-effort; ignore if already gone)
-	obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", fullName, req.Tag))
-	if err := obj.Delete(ctx); err != nil && !isNotFound(err) {
+	if err := a.deleteTagObject(ctx, fullName, req.Tag); err != nil {
 		return err
 	}
 
