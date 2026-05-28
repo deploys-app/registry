@@ -135,6 +135,7 @@ func main() {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	app.mountInternalGCS(mux, internalAuth)
 
 	promAddr := config.StringDefault("prom_addr", ":9187")
 	go func() {
