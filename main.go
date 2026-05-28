@@ -70,7 +70,6 @@ func main() {
 	})
 	mux.Handle("/v2/", authMiddleware(http.HandlerFunc(app.registryHandler)))
 	mux.HandleFunc("/_cdn/", app.cdnHandler)
-	app.mountAPI(mux)
 	internalAuth := func(w http.ResponseWriter, r *http.Request) bool {
 		if internalSecret != "" && subtle.ConstantTimeCompare(
 			[]byte(r.Header.Get("Authorization")),

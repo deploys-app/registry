@@ -22,8 +22,6 @@ const (
 
 	permPull = "registry.pull"
 	permPush = "registry.push"
-	permList = "registry.list"
-	permGet  = "registry.get"
 )
 
 type contextKey int
@@ -47,15 +45,6 @@ func authFromContext(ctx context.Context) string {
 func projectIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(projectIDKey).(string)
 	return v
-}
-
-func apiAuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if auth := r.Header.Get("Authorization"); auth != "" {
-			r = r.WithContext(context.WithValue(r.Context(), authKey, auth))
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func getEmail(ctx context.Context, auth string) string {
@@ -176,10 +165,6 @@ func checkPermissionWithID(ctx context.Context, project, permission string) perm
 		return result, nil
 	})
 	return result
-}
-
-func checkPermission(ctx context.Context, project, permission string) bool {
-	return checkPermissionWithID(ctx, project, permission).OK
 }
 
 func authMiddleware(next http.Handler) http.Handler {
