@@ -51,7 +51,6 @@ func (a *App) deleteManifestObjects(ctx context.Context, fullName, digest string
 		return nil
 	})
 	for _, tag := range tags {
-		tag := tag
 		g.Go(func() error {
 			obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", fullName, tag))
 			if err := obj.Delete(gctx); err != nil && !isNotFound(err) {

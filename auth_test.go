@@ -191,7 +191,7 @@ func TestCheckPermission_SingleflightCollapsesConcurrentCalls(t *testing.T) {
 	results := make([]permissionResult, N)
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -253,7 +253,7 @@ func TestGetEmail_SingleflightCollapsesConcurrentCalls(t *testing.T) {
 	emails := make([]string, N)
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

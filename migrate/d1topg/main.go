@@ -23,8 +23,8 @@ import (
 	"os"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/acoshift/pgsql/pgstmt"
+	_ "github.com/lib/pq"
 )
 
 const (

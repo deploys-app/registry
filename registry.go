@@ -362,10 +362,7 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 				return
 			}
 			if projectID != "" {
-				size := r.ContentLength
-				if size < 0 {
-					size = 0
-				}
+				size := max(r.ContentLength, 0)
 				uploadCount.WithLabelValues(projectID).Inc()
 				uploadBytes.WithLabelValues(projectID).Add(float64(size))
 			}
@@ -439,10 +436,7 @@ func (a *App) patchUpload(w http.ResponseWriter, r *http.Request, name, referenc
 		slog.Debug("patch upload empty chunk ignored", "name", name, "reference", reference)
 	}
 
-	end := state.Size - 1
-	if end < 0 {
-		end = 0
-	}
+	end := max(state.Size-1, 0)
 	w.Header().Set("Location", uploadLocation(name, reference, state))
 	w.Header().Set("Range", fmt.Sprintf("0-%d", end))
 	w.WriteHeader(http.StatusAccepted)
@@ -758,10 +752,7 @@ func (a *App) composeParts(ctx context.Context, reference string, partCount int,
 	for len(srcs) > maxCompose {
 		var next []*storage.ObjectHandle
 		for i := 0; i < len(srcs); i += maxCompose {
-			end := i + maxCompose
-			if end > len(srcs) {
-				end = len(srcs)
-			}
+			end := min(i+maxCompose, len(srcs))
 			batch := srcs[i:end]
 			stageDst := a.Bucket.Object(fmt.Sprintf("_uploads/%s/stage-%d-%d", reference, stage, len(next)))
 			stageTempObjects = append(stageTempObjects, stageDst)
