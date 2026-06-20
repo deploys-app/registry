@@ -20,6 +20,7 @@ import (
 	"github.com/acoshift/pgsql"
 	"github.com/acoshift/pgsql/pgctx"
 	"github.com/acoshift/pgsql/pgstmt"
+	"github.com/lib/pq"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
 )
@@ -593,8 +594,8 @@ func (a *App) putManifest(w http.ResponseWriter, r *http.Request, name, referenc
 		}
 	}
 
-	if err := a.indexManifestBlobs(ctx, name, digest, body); err != nil {
-		slog.Error("index manifest blobs", "name", name, "digest", digest, "error", err)
+	if err := a.indexManifest(ctx, name, digest, body); err != nil {
+		slog.Error("index manifest", "name", name, "digest", digest, "error", err)
 		// non-fatal: index can be rebuilt later
 	}
 
@@ -795,63 +796,145 @@ type manifestContent struct {
 	Layers []struct {
 		Digest string `json:"digest"`
 	} `json:"layers"`
+	// Manifests is the child list of an image index / manifest list (multi-arch).
+	// An index references sub-manifests by digest and has no config/layers of its
+	// own, so its size is the sum of those children's sizes.
+	Manifests []struct {
+		Digest string `json:"digest"`
+	} `json:"manifests"`
 }
 
-// indexManifestBlobs parses a manifest body and records which blobs it references.
-func (a *App) indexManifestBlobs(ctx context.Context, repository, manifestDigest string, body []byte) error {
+// dedupeDigests returns the non-empty digests of v with duplicates removed.
+func dedupeDigests[T any](v []T, digest func(T) string) []string {
+	seen := make(map[string]struct{}, len(v))
+	out := make([]string, 0, len(v))
+	for _, it := range v {
+		d := digest(it)
+		if d == "" {
+			continue
+		}
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	return out
+}
+
+// indexManifest parses a manifest body, records which blobs it references (for
+// image manifests), and stores the manifest's size:
+//   - image manifest: size is the sum of its blob sizes (config + layers).
+//   - image index / manifest list: size is the sum of its children's sizes; if
+//     any child is not yet indexed, size is left NULL so the next index pass
+//     retries once the children have been sized.
+func (a *App) indexManifest(ctx context.Context, repository, manifestDigest string, body []byte) error {
 	var m manifestContent
 	if err := json.Unmarshal(body, &m); err != nil {
 		return err
 	}
 
-	seen := make(map[string]struct{})
-	if d := m.Config.Digest; d != "" {
-		seen[d] = struct{}{}
-	}
-	for _, layer := range m.Layers {
-		if d := layer.Digest; d != "" {
-			seen[d] = struct{}{}
+	// Image index / manifest list: sum the children's sizes.
+	if len(m.Manifests) > 0 {
+		children := dedupeDigests(m.Manifests, func(c struct {
+			Digest string `json:"digest"`
+		}) string {
+			return c.Digest
+		})
+		if len(children) == 0 {
+			return a.setManifestSize(ctx, repository, manifestDigest, 0)
 		}
-	}
-	if len(seen) == 0 {
-		return nil
+		var total int64
+		var sized int
+		if err := pgctx.QueryRow(ctx, `
+			select coalesce(sum(size), 0), count(*)
+			from manifests
+			where repository = $1 and digest = any($2::text[]) and size is not null
+		`, repository, pq.Array(children)).Scan(&total, &sized); err != nil {
+			return err
+		}
+		if sized < len(children) {
+			// Some children aren't sized yet — leave NULL so a later pass retries.
+			return nil
+		}
+		return a.setManifestSize(ctx, repository, manifestDigest, total)
 	}
 
-	_, err := pgstmt.Insert(func(b pgstmt.InsertStatement) {
-		b.Into("manifest_blobs")
-		b.Columns("repository", "manifest_digest", "blob_digest")
-		for blobDigest := range seen {
-			b.Value(repository, manifestDigest, blobDigest)
+	// Image manifest: record blob references, then size = sum of those blobs.
+	blobs := dedupeDigests(append([]struct {
+		Digest string `json:"digest"`
+	}{m.Config}, m.Layers...), func(l struct {
+		Digest string `json:"digest"`
+	}) string {
+		return l.Digest
+	})
+	if len(blobs) > 0 {
+		_, err := pgstmt.Insert(func(b pgstmt.InsertStatement) {
+			b.Into("manifest_blobs")
+			b.Columns("repository", "manifest_digest", "blob_digest")
+			for _, blobDigest := range blobs {
+				b.Value(repository, manifestDigest, blobDigest)
+			}
+			b.OnConflictDoNothing()
+		}).ExecWith(ctx)
+		if err != nil {
+			return err
 		}
-		b.OnConflictDoNothing()
-	}).ExecWith(ctx)
+	}
+	return a.sizeImageFromBlobs(ctx, repository, manifestDigest)
+}
+
+func (a *App) setManifestSize(ctx context.Context, repository, manifestDigest string, size int64) error {
+	_, err := pgctx.Exec(ctx, `
+		update manifests
+		set size = $3, updated_at = now()
+		where repository = $1 and digest = $2
+	`, repository, manifestDigest, size)
 	return err
 }
 
-// rebuildManifestBlobsIndex fetches every manifest that has no rows in
-// manifest_blobs yet, reads its content from GCS, and indexes the blob refs.
+func (a *App) readManifestBody(ctx context.Context, repository, digest string) ([]byte, error) {
+	obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", repository, digest))
+	rc, err := obj.NewReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(rc)
+}
+
+// rebuildManifestBlobsIndex fetches every manifest whose size has not been
+// computed yet, reads its content from GCS, and indexes it (blob refs + size).
+// Image manifests are processed before image indexes so an index can sum its
+// already-sized children within a single pass.
 func (a *App) rebuildManifestBlobsIndex(ctx context.Context) error {
 	type manifestID struct {
 		repository string
 		digest     string
 	}
 
-	var unindexed []manifestID
+	type unindexedManifest struct {
+		manifestID
+		hasBlobs bool
+	}
+	var unindexed []unindexedManifest
 	err := pgctx.Iter(ctx, func(scan pgsql.Scanner) error {
-		var m manifestID
-		if err := scan(&m.repository, &m.digest); err != nil {
+		var m unindexedManifest
+		if err := scan(&m.repository, &m.digest, &m.hasBlobs); err != nil {
 			return err
 		}
 		unindexed = append(unindexed, m)
 		return nil
 	}, `
-		select m.repository, m.digest
+		select
+			m.repository,
+			m.digest,
+			exists (
+				select 1 from manifest_blobs mb
+				where mb.repository = m.repository and mb.manifest_digest = m.digest
+			)
 		from manifests m
-		where not exists (
-			select 1 from manifest_blobs mb
-			where mb.repository = m.repository
-			  and mb.manifest_digest = m.digest
-		)
+		where m.size is null
 	`)
 	if err != nil {
 		return fmt.Errorf("query unindexed manifests: %w", err)
@@ -861,28 +944,66 @@ func (a *App) rebuildManifestBlobsIndex(ctx context.Context) error {
 	}
 
 	slog.Info("indexing manifests", "count", len(unindexed))
+	type pending struct {
+		id   manifestID
+		body []byte
+	}
+	var indexes []pending // image indexes, deferred until images are sized
 	indexed := 0
 	for _, m := range unindexed {
-		obj := a.Bucket.Object(fmt.Sprintf("%s/manifests/%s", m.repository, m.digest))
-		rc, err := obj.NewReader(ctx)
+		// Already-indexed image: its blob refs exist, so size can be recomputed
+		// from the DB without re-reading the manifest body from GCS.
+		if m.hasBlobs {
+			if err := a.sizeImageFromBlobs(ctx, m.repository, m.digest); err != nil {
+				slog.Warn("size manifest from blobs", "repository", m.repository, "digest", m.digest, "error", err)
+				continue
+			}
+			indexed++
+			continue
+		}
+		// No blob refs yet: either an image index (references child manifests) or
+		// an un-indexed image. Read the body to tell them apart.
+		body, err := a.readManifestBody(ctx, m.repository, m.digest)
 		if err != nil {
 			slog.Warn("read manifest for indexing", "repository", m.repository, "digest", m.digest, "error", err)
 			continue
 		}
-		body, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			slog.Warn("read manifest body", "repository", m.repository, "digest", m.digest, "error", err)
+		var mc manifestContent
+		if err := json.Unmarshal(body, &mc); err == nil && len(mc.Manifests) > 0 {
+			indexes = append(indexes, pending{id: m.manifestID, body: body})
 			continue
 		}
-		if err := a.indexManifestBlobs(ctx, m.repository, m.digest, body); err != nil {
-			slog.Warn("index manifest blobs", "repository", m.repository, "digest", m.digest, "error", err)
+		if err := a.indexManifest(ctx, m.repository, m.digest, body); err != nil {
+			slog.Warn("index manifest", "repository", m.repository, "digest", m.digest, "error", err)
+			continue
+		}
+		indexed++
+	}
+	// Indexes last, so their (now-sized) children are summed correctly.
+	for _, ix := range indexes {
+		if err := a.indexManifest(ctx, ix.id.repository, ix.id.digest, ix.body); err != nil {
+			slog.Warn("index manifest", "repository", ix.id.repository, "digest", ix.id.digest, "error", err)
 			continue
 		}
 		indexed++
 	}
 	slog.Info("indexing complete", "indexed", indexed, "total", len(unindexed))
 	return nil
+}
+
+// sizeImageFromBlobs sets an image manifest's size from its already-recorded
+// blob references, without re-reading the manifest body.
+func (a *App) sizeImageFromBlobs(ctx context.Context, repository, manifestDigest string) error {
+	var total int64
+	if err := pgctx.QueryRow(ctx, `
+		select coalesce(sum(b.size), 0)
+		from manifest_blobs mb
+		join blobs b on b.repository = mb.repository and b.digest = mb.blob_digest
+		where mb.repository = $1 and mb.manifest_digest = $2
+	`, repository, manifestDigest).Scan(&total); err != nil {
+		return err
+	}
+	return a.setManifestSize(ctx, repository, manifestDigest, total)
 }
 
 func (a *App) insertBlob(ctx context.Context, name, digest string, size int64) error {

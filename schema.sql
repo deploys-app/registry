@@ -8,6 +8,7 @@ create index repositories_namespace_idx on repositories (namespace);
 create table manifests (
 	repository text        not null,
 	digest     text        not null,
+	size       bigint,
 	created_at timestamptz not null default now(),
 	updated_at timestamptz not null default now(),
 	primary key (repository, digest),
