@@ -136,13 +136,24 @@ func (a *App) getBlob(w http.ResponseWriter, r *http.Request, name, digest strin
 		return
 	}
 
-	if a.CDNDomain != "" && !isInternalClient(r) {
+	// External clients are redirected to a cacheable, content-addressed blob
+	// origin so the bytes are served off the registry's hot path. With
+	// CDN_DOMAIN set, point at that separate CDN host (the cross-origin hop
+	// also strips the client's Authorization header). With CDN_DOMAIN empty,
+	// redirect to the same-host /_cdn/ path so a CDN sitting in front of the
+	// registry (e.g. Cloud CDN on registry.deploys.app) caches it directly.
+	// Internal callers (in-cluster pulls) stream below to avoid the extra hop.
+	if !isInternalClient(r) {
 		if projectID := projectIDFromContext(ctx); projectID != "" {
 			downloadCount.WithLabelValues(projectID).Inc()
 			egressBytes.WithLabelValues(projectID).Add(float64(attrs.Size))
 		}
 		w.Header().Set("Docker-Content-Digest", digest)
-		http.Redirect(w, r, "https://"+a.CDNDomain+"/"+name+"/blobs/"+digest, http.StatusTemporaryRedirect)
+		location := "/_cdn/" + name + "/blobs/" + digest
+		if a.CDNDomain != "" {
+			location = "https://" + a.CDNDomain + "/" + name + "/blobs/" + digest
+		}
+		http.Redirect(w, r, location, http.StatusTemporaryRedirect)
 		return
 	}
 
