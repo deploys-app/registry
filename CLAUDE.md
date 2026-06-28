@@ -8,6 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build
 go build ./...
 
+# Test (the auth helpers / permission caching have unit tests; most of the
+# OCI + storage paths still need a real PostgreSQL and GCS bucket and are
+# uncovered)
+go test ./...
+
 # Run locally (requires a real PostgreSQL and GCS bucket)
 DB_URL=postgres://user:pass@host/db BUCKET_NAME=my-bucket go run .
 
@@ -15,7 +20,7 @@ DB_URL=postgres://user:pass@host/db BUCKET_NAME=my-bucket go run .
 psql $DB_URL -f schema.sql
 ```
 
-There are no tests in this repository. CI only builds and pushes a Docker image on push to `main`.
+CI builds and pushes a Docker image on push to `main`; it does not run the tests.
 
 ## Architecture
 
