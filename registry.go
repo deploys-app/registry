@@ -325,8 +325,10 @@ func (a *App) startUpload(w http.ResponseWriter, r *http.Request, name string) {
 
 		if origin != "" {
 			resp, err := http.Get("https://" + origin + "/v2/" + from + "/blobs/" + mount)
-			if err == nil && resp.StatusCode == http.StatusOK {
+			if err == nil {
 				defer resp.Body.Close()
+			}
+			if err == nil && resp.StatusCode == http.StatusOK {
 				size, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 				if err := a.writeBlob(ctx, name, mount, resp.Body); err == nil {
 					if err := a.insertBlob(ctx, name, mount, size); err != nil {
