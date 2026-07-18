@@ -34,7 +34,7 @@ Single-binary Go service (`package main`) — all files compile together with no
 | `registry.go` | OCI Distribution Spec v1 implementation (`/v2/` routes) including chunked blob upload via GCS compose |
 | `api.go` | Management API (`/api/` routes) using arpc |
 | `auth.go` | Auth middleware + `checkPermission` / `getEmail` helpers that delegate to `api.deploys.app` with 30 s in-memory caching |
-| `gc.go` | `runBlobGC` — deletes unreferenced blobs older than 1 day |
+| `gc.go` | `runBlobGC` — deletes unreferenced blobs older than 1 day (skips repos with unindexed manifests) |
 | `storage_usage.go` | `calculateProjectStorage` — aggregates blob sizes per project namespace |
 | `errors.go` | Shared `arpc.NewError` values (`errForbidden`, `errRepoNotFound`, etc.) |
 | `schema.sql` | PostgreSQL schema (apply manually; no migration tool) |

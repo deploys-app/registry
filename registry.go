@@ -692,6 +692,7 @@ func (a *App) deleteManifest(w http.ResponseWriter, r *http.Request, name, refer
 		// Delete dependent rows before manifests (FK constraints have no CASCADE).
 		for _, q := range []string{
 			`delete from manifest_blobs where repository = $1 and manifest_digest = $2`,
+			`delete from manifest_children where repository = $1 and (parent_digest = $2 or child_digest = $2)`,
 			`delete from tags            where repository = $1 and digest         = $2`,
 			`delete from manifests       where repository = $1 and digest         = $2`,
 		} {
@@ -836,24 +837,29 @@ func dedupeDigests[T any](v []T, digest func(T) string) []string {
 }
 
 // indexManifest parses a manifest body, records which blobs it references (for
-// image manifests), and stores the manifest's size:
+// image manifests) or which child manifests it references (for image indexes),
+// and stores the manifest's size:
 //   - image manifest: size is the sum of its blob sizes (config + layers).
 //   - image index / manifest list: size is the sum of its children's sizes; if
 //     any child is not yet indexed, size is left NULL so the next index pass
-//     retries once the children have been sized.
+//     retries once the children have been sized. Child digests are always
+//     recorded so registry.gc can keep platform manifests of a live index.
 func (a *App) indexManifest(ctx context.Context, repository, manifestDigest string, body []byte) error {
 	var m manifestContent
 	if err := json.Unmarshal(body, &m); err != nil {
 		return err
 	}
 
-	// Image index / manifest list: sum the children's sizes.
+	// Image index / manifest list: record children, then sum their sizes.
 	if len(m.Manifests) > 0 {
 		children := dedupeDigests(m.Manifests, func(c struct {
 			Digest string `json:"digest"`
 		}) string {
 			return c.Digest
 		})
+		if err := a.recordManifestChildren(ctx, repository, manifestDigest, children); err != nil {
+			return err
+		}
 		if len(children) == 0 {
 			return a.setManifestSize(ctx, repository, manifestDigest, 0)
 		}
@@ -897,6 +903,23 @@ func (a *App) indexManifest(ctx context.Context, repository, manifestDigest stri
 	return a.sizeImageFromBlobs(ctx, repository, manifestDigest)
 }
 
+// recordManifestChildren stores index → child-manifest digests for GC keep-set
+// expansion. Idempotent.
+func (a *App) recordManifestChildren(ctx context.Context, repository, parentDigest string, children []string) error {
+	if len(children) == 0 {
+		return nil
+	}
+	_, err := pgstmt.Insert(func(b pgstmt.InsertStatement) {
+		b.Into("manifest_children")
+		b.Columns("repository", "parent_digest", "child_digest")
+		for _, child := range children {
+			b.Value(repository, parentDigest, child)
+		}
+		b.OnConflictDoNothing()
+	}).ExecWith(ctx)
+	return err
+}
+
 func (a *App) setManifestSize(ctx context.Context, repository, manifestDigest string, size int64) error {
 	_, err := pgctx.Exec(ctx, `
 		update manifests
@@ -916,10 +939,12 @@ func (a *App) readManifestBody(ctx context.Context, repository, digest string) (
 	return io.ReadAll(rc)
 }
 
-// rebuildManifestBlobsIndex fetches every manifest whose size has not been
-// computed yet, reads its content from GCS, and indexes it (blob refs + size).
-// Image manifests are processed before image indexes so an index can sum its
-// already-sized children within a single pass.
+// rebuildManifestBlobsIndex fetches every manifest that still needs indexing:
+// size not yet computed, or a sized index missing manifest_children rows
+// (backfill after the children table was introduced). Reads content from GCS
+// and records blob refs / child refs + size. Image manifests are processed
+// before image indexes so an index can sum its already-sized children within a
+// single pass.
 func (a *App) rebuildManifestBlobsIndex(ctx context.Context) error {
 	type manifestID struct {
 		repository string
@@ -948,6 +973,21 @@ func (a *App) rebuildManifestBlobsIndex(ctx context.Context) error {
 			)
 		from manifests m
 		where m.size is null
+		   or (
+		        -- Sized image indexes with no blob refs and no child links yet:
+		        -- backfill manifest_children so registry.gc can retain platforms.
+		        -- size > 0 excludes empty images (no layers) that would otherwise
+		        -- match forever (no blobs, no children).
+		        m.size > 0
+		        and not exists (
+		            select 1 from manifest_blobs mb
+		            where mb.repository = m.repository and mb.manifest_digest = m.digest
+		        )
+		        and not exists (
+		            select 1 from manifest_children mc
+		            where mc.repository = m.repository and mc.parent_digest = m.digest
+		        )
+		   )
 	`)
 	if err != nil {
 		return fmt.Errorf("query unindexed manifests: %w", err)

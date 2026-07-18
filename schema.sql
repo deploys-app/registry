@@ -42,6 +42,18 @@ create table manifest_blobs (
 );
 create index manifest_blobs_blob_idx on manifest_blobs (repository, blob_digest);
 
+-- Image index / manifest list → child manifest digests. Used by registry.gc so
+-- a kept multi-arch index also retains its platform manifests (and thus their
+-- layer blobs via manifest_blobs).
+create table manifest_children (
+	repository    text not null,
+	parent_digest text not null,
+	child_digest  text not null,
+	primary key (repository, parent_digest, child_digest),
+	foreign key (repository, parent_digest) references manifests (repository, digest)
+);
+create index manifest_children_child_idx on manifest_children (repository, child_digest);
+
 create table project_storage_usage (
 	namespace  text        not null primary key,
 	size       bigint      not null default 0,

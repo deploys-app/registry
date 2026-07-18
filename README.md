@@ -54,6 +54,7 @@ psql $DB_URL -f schema.sql
 | `tags` | Tag → manifest digest mappings |
 | `blobs` | Blob metadata including size |
 | `manifest_blobs` | Manifest → blob references (rebuilt by `indexManifests`) |
+| `manifest_children` | Image index → child manifest digests (for multi-arch GC keep-set expansion) |
 | `project_storage_usage` | Pre-calculated total blob storage per project namespace (updated by `calculateProjectStorage`) |
 
 ## API
@@ -255,7 +256,7 @@ Requires `registry.push` permission.
 
 ### `POST /internal/indexManifests`
 
-Reads every manifest that has no `manifest_blobs` rows yet, fetches its content from GCS, and records which blobs it references. Runs as part of `POST /internal/runAll`.
+Reads every unindexed manifest (size still null) and any sized image index missing `manifest_children` rows, fetches content from GCS, and records blob refs (image manifests) or child-manifest digests (image indexes). Runs as part of `POST /internal/runAll`.
 
 Protected by `Authorization: Bearer <INTERNAL_SECRET>`. If `INTERNAL_SECRET` is not set the check is skipped (local dev only).
 
@@ -270,7 +271,7 @@ curl -X POST https://registry.deploys.app/internal/indexManifests \
 
 ### `POST /internal/runBlobGC`
 
-Deletes blobs that are not referenced by any manifest and are older than 1 day. The 1-day grace period covers blobs that have been uploaded but whose manifest push is still in flight. Runs as part of `POST /internal/runAll`.
+Deletes blobs that are not referenced by any manifest and are older than 1 day. The 1-day grace period covers blobs that have been uploaded but whose manifest push is still in flight. Repositories that still have unindexed manifests (`size is null`) are skipped so incomplete indexing cannot orphan a live image's layers. Runs as part of `POST /internal/runAll`.
 
 Returns `204 No Content` on success. Protected by the same `INTERNAL_SECRET` bearer token.
 
