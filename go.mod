@@ -1,12 +1,11 @@
 module moonrhythm/registry
 
-go 1.26.3
+go 1.27.0
 
 replace github.com/lib/pq => github.com/moonrhythm/pq v0.0.0-20230504040008-09b0644d6569
 
 require (
 	cloud.google.com/go/storage v1.62.1
-	github.com/acoshift/arpc/v2 v2.2.0
 	github.com/acoshift/configfile v1.9.0
 	github.com/acoshift/pgsql v0.16.0
 	github.com/aws/aws-sdk-go-v2 v1.41.7
