@@ -176,8 +176,10 @@ func copyObject(ctx context.Context, r2 *s3.Client, r2Bucket string, gcsBucket *
 // digestFromKey returns the digest if it is encoded in the object key, or empty
 // string for tag-addressed manifests where the digest must be computed.
 func digestFromKey(key string) string {
-	parts := strings.Split(key, "/")
-	last := parts[len(parts)-1]
+	last := key
+	if _, after, ok := strings.CutLast(key, "/"); ok {
+		last = after
+	}
 	if strings.HasPrefix(last, "sha256:") {
 		return last
 	}
