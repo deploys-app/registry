@@ -192,12 +192,10 @@ func TestCheckPermission_SingleflightCollapsesConcurrentCalls(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	for i := range N {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
-			results[idx] = checkPermissionWithID(ctx, "sfproject", permPull)
-		}(i)
+			results[i] = checkPermissionWithID(ctx, "sfproject", permPull)
+		})
 	}
 	close(start)
 	wg.Wait()
@@ -254,12 +252,10 @@ func TestGetEmail_SingleflightCollapsesConcurrentCalls(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	for i := range N {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
-			emails[idx] = getEmail(context.Background(), token)
-		}(i)
+			emails[i] = getEmail(context.Background(), token)
+		})
 	}
 	close(start)
 	wg.Wait()
